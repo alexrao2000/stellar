@@ -61,7 +61,13 @@ make sync
 ```
 
 A browser window opens once for Google consent. The token is cached in `token.json`,
-so later runs are non-interactive.
+so later runs refresh the access token automatically. If the refresh token is expired
+or revoked (common for OAuth apps still in **Testing** mode after ~7 days), the next
+`make sync` deletes the stale token and opens the auth link again. To force that:
+
+```bash
+make reauth
+```
 
 ### 4. Dashboard
 
@@ -85,6 +91,7 @@ launchctl unload ~/Library/LaunchAgents/com.alexr.caltasksync.plist
 
 ```bash
 make sync                 # Pull Google Tasks and store wake/weight data
+make reauth               # Force Google re-consent, then sync
 make dashboard            # Launch Streamlit charts
 make install-scheduler    # Install hourly launchd sync job
 make help                 # List targets
