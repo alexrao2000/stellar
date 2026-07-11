@@ -1,0 +1,26 @@
+# Secrets / credentials
+.env
+credentials.json
+token.json
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env.local
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Local data (sqlite fallback)
+*.sqlite
+*.db
+
+# Logs
+logs/
+*.log

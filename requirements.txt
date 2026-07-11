@@ -1,0 +1,8 @@
+google-api-python-client>=2.130.0
+google-auth>=2.30.0
+google-auth-oauthlib>=1.2.0
+supabase>=2.7.0
+python-dotenv>=1.0.1
+streamlit>=1.37.0
+plotly>=5.23.0
+pandas>=2.2.0
