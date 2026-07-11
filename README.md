@@ -57,7 +57,7 @@ and apply [`sql/schema.sql`](sql/schema.sql) to your Supabase project.
 ### 3. First run (one-time Google consent)
 
 ```bash
-python -m src.sync
+make sync
 ```
 
 A browser window opens once for Google consent. The token is cached in `token.json`,
@@ -66,19 +66,28 @@ so later runs are non-interactive.
 ### 4. Dashboard
 
 ```bash
-streamlit run dashboard/app.py
+make dashboard
 ```
 
 ### 5. Schedule it (hourly, macOS launchd)
 
 ```bash
-bash scheduler/install.sh
+make install-scheduler
 ```
 
 Logs go to `logs/sync.out.log` and `logs/sync.err.log`. Stop with:
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.alexr.caltasksync.plist
+```
+
+## Make targets
+
+```bash
+make sync                 # Pull Google Tasks and store wake/weight data
+make dashboard            # Launch Streamlit charts
+make install-scheduler    # Install hourly launchd sync job
+make help                 # List targets
 ```
 
 ## Notes / customization
