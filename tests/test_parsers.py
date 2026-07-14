@@ -29,12 +29,37 @@ def test_parse_weight_full():
     assert parse_weight(notes) == (178.2, "8/8/24", 181.9)
 
 
+def test_parse_weight_without_lbs_unit():
+    notes = "Start Date+Weight: 8/8/24, 181.9 lbs, Current Weight: 182.4 (this was with my jacket)"
+    assert parse_weight(notes) == (182.4, "8/8/24", 181.9)
+
+
 def test_parse_weight_current_only():
     assert parse_weight("Current Weight: 175 lbs") == (175.0, None, None)
 
 
 def test_parse_weight_missing():
     assert parse_weight("Start Date+Weight: 8/8/24, 181.9 lbs") is None
+
+
+def test_seed_start_weight_rows():
+    from src.parsers import WeightRow, seed_start_weight_rows
+
+    rows = [
+        WeightRow(
+            day="2026-07-11",
+            weight_lbs=150.8,
+            start_date="8/8/24",
+            start_weight_lbs=181.9,
+            raw_notes="...",
+            source_task_id="abc",
+        )
+    ]
+    seeded = seed_start_weight_rows(rows)
+    days = {r.day for r in seeded}
+    assert days == {"2024-08-08", "2026-07-11"}
+    start = next(r for r in seeded if r.day == "2024-08-08")
+    assert start.weight_lbs == 181.9
 
 
 if __name__ == "__main__":

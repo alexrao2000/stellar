@@ -13,8 +13,11 @@ create table if not exists public.task_completions (
     notes        text,
     updated_at   timestamptz,
     is_completed boolean,
+    source       text default 'tasks',
     synced_at    timestamptz default now()
 );
+
+alter table public.task_completions add column if not exists source text default 'tasks';
 
 create index if not exists idx_task_completions_day on public.task_completions(day);
 create index if not exists idx_task_completions_title on public.task_completions(title);

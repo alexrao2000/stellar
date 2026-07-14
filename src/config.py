@@ -12,6 +12,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 TASKS_SCOPES = ["https://www.googleapis.com/auth/tasks.readonly"]
+CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+
+# Full set of scopes requested during OAuth consent.
+SCOPES = TASKS_SCOPES + CALENDAR_SCOPES
 
 
 def _resolve(path_value: str) -> str:
@@ -42,6 +46,12 @@ class Config:
 
     wake_up_task_title: str = field(default_factory=lambda: os.getenv("WAKE_UP_TASK_TITLE", "Wake Up"))
     weight_task_title: str = field(default_factory=lambda: os.getenv("WEIGHT_TASK_TITLE", "Weigh yourself"))
+
+    # Calendar API does not expose Google Tasks (only real events), so it's off by
+    # default. Enable only if you also want to ingest calendar events.
+    include_calendar_events: bool = field(
+        default_factory=lambda: os.getenv("INCLUDE_CALENDAR_EVENTS", "false").lower() == "true"
+    )
 
     def validate(self) -> None:
         if not Path(self.google_credentials_file).exists():

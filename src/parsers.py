@@ -9,19 +9,23 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, time
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from .tasks_client import TaskRecord
 
+if TYPE_CHECKING:
+    from .calendar_client import CalendarEventRecord
+
 # "Wake-up Time: 7:30 AM"  /  "Wake up Time: 06:05 pm"
 _WAKE_RE = re.compile(r"wake[\s-]*up\s*time\s*:\s*(\d{1,2}):(\d{2})\s*([AaPp][Mm])", re.IGNORECASE)
 
-# "Current Weight: 178.2 lbs"
-_CURRENT_WEIGHT_RE = re.compile(r"current\s*weight\s*:\s*([\d.]+)\s*lbs?", re.IGNORECASE)
+# "Current Weight: 178.2 lbs" / "Current Weight: 182.4 (notes...)"
+_CURRENT_WEIGHT_RE = re.compile(r"current\s*weight\s*:\s*([\d.]+)\s*(?:lbs?)?", re.IGNORECASE)
 
 # "Start Date+Weight: 8/8/24, 181.9 lbs"
 _START_RE = re.compile(
-    r"start\s*date\s*\+?\s*weight\s*:\s*([\d/]+)\s*,\s*([\d.]+)\s*lbs?", re.IGNORECASE
+    r"start\s*date\s*\+?\s*weight\s*:\s*([\d/]+)\s*,\s*([\d.]+)\s*(?:lbs?)?", re.IGNORECASE
 )
 
 
@@ -38,6 +42,7 @@ class CompletionRow:
     notes: str | None
     updated_at: str | None
     is_completed: bool
+    source: str = "tasks"  # "tasks" or "calendar"
 
 
 @dataclass
@@ -134,41 +139,117 @@ def parse_weight(notes: str | None) -> tuple[float, str | None, float | None] | 
     return current_weight, start_date, start_weight
 
 
-def extract_metrics(
-    task: TaskRecord,
+def normalize_us_date(value: str | None) -> str | None:
+    """Normalize M/D/YY or M/D/YYYY to YYYY-MM-DD."""
+    if not value:
+        return None
+    cleaned = value.strip()
+    for fmt in ("%m/%d/%y", "%m/%d/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(cleaned, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def seed_start_weight_rows(weight_rows: list[WeightRow]) -> list[WeightRow]:
+    """Add a baseline point from Start Date+Weight when that day isn't already logged."""
+    seeded = list(weight_rows)
+    seen_days = {r.day for r in weight_rows}
+    for row in weight_rows:
+        day = normalize_us_date(row.start_date)
+        if not day or day in seen_days or row.start_weight_lbs is None:
+            continue
+        seeded.append(
+            WeightRow(
+                day=day,
+                weight_lbs=float(row.start_weight_lbs),
+                start_date=row.start_date,
+                start_weight_lbs=row.start_weight_lbs,
+                raw_notes=f"[seeded start weight] {row.raw_notes}",
+                source_task_id=row.source_task_id,
+            )
+        )
+        seen_days.add(day)
+    return seeded
+
+
+def metrics_from(
+    title: str,
     day: str | None,
+    notes: str | None,
+    source_id: str,
     wake_title: str,
     weight_title: str,
 ) -> tuple[WakeUpRow | None, WeightRow | None]:
-    """Produce metric rows from a single task, matched by title."""
-    if not day or not task.notes:
+    """Produce metric rows from any titled, dated, note-bearing item."""
+    if not day or not notes:
         return None, None
 
     wake_row: WakeUpRow | None = None
     weight_row: WeightRow | None = None
-    title = task.title.strip().lower()
+    norm_title = title.strip().lower()
 
-    if title == wake_title.strip().lower():
-        parsed = parse_wake_up(task.notes)
+    if norm_title == wake_title.strip().lower():
+        parsed = parse_wake_up(notes)
         if parsed:
             wake_row = WakeUpRow(
                 day=day,
                 wake_time=parsed[0],
                 wake_minutes=parsed[1],
-                raw_notes=task.notes,
-                source_task_id=task.task_id,
+                raw_notes=notes,
+                source_task_id=source_id,
             )
 
-    if title == weight_title.strip().lower():
-        parsed_w = parse_weight(task.notes)
+    if norm_title == weight_title.strip().lower():
+        parsed_w = parse_weight(notes)
         if parsed_w:
             weight_row = WeightRow(
                 day=day,
                 weight_lbs=parsed_w[0],
                 start_date=parsed_w[1],
                 start_weight_lbs=parsed_w[2],
-                raw_notes=task.notes,
-                source_task_id=task.task_id,
+                raw_notes=notes,
+                source_task_id=source_id,
             )
 
     return wake_row, weight_row
+
+
+def extract_metrics(
+    task: TaskRecord,
+    day: str | None,
+    wake_title: str,
+    weight_title: str,
+) -> tuple[WakeUpRow | None, WeightRow | None]:
+    """Produce metric rows from a single Google Task, matched by title."""
+    return metrics_from(task.title, day, task.notes, task.task_id, wake_title, weight_title)
+
+
+def calendar_event_to_completion(ev: "CalendarEventRecord") -> CompletionRow:
+    """Map a Calendar event instance to a completion row."""
+    return CompletionRow(
+        task_id=ev.event_id,
+        list_id=ev.calendar_id,
+        list_title=ev.calendar_summary,
+        title=ev.title,
+        status=ev.status or "",
+        day=ev.day,
+        due=None,
+        completed_at=None,
+        notes=ev.description,
+        updated_at=ev.updated,
+        # Placeholder until we confirm how completion is encoded in Calendar;
+        # a cancelled instance is definitely not complete.
+        is_completed=(ev.status or "") != "cancelled",
+        source="calendar",
+    )
+
+
+def calendar_extract_metrics(
+    ev: "CalendarEventRecord",
+    wake_title: str,
+    weight_title: str,
+) -> tuple[WakeUpRow | None, WeightRow | None]:
+    """Produce metric rows from a Calendar event's description."""
+    return metrics_from(ev.title, ev.day, ev.description, ev.event_id, wake_title, weight_title)

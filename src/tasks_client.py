@@ -42,6 +42,7 @@ def _iter_task_lists(service, wanted_names: list[str]) -> Iterator[dict]:
 
 
 def _iter_tasks(service, list_id: str) -> Iterator[dict]:
+    """List tasks including completed ones as far back as Google still retains them."""
     page_token = None
     while True:
         resp = (
@@ -50,7 +51,10 @@ def _iter_tasks(service, list_id: str) -> Iterator[dict]:
                 tasklist=list_id,
                 showCompleted=True,
                 showHidden=True,
+                showDeleted=False,
                 maxResults=100,
+                # Without this, Google often returns only recent completions.
+                completedMin="2018-01-01T00:00:00.000Z",
                 pageToken=page_token,
             )
             .execute()

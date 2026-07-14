@@ -9,15 +9,15 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from .config import TASKS_SCOPES, Config
+from .config import SCOPES, Config
 
 log = logging.getLogger("cal-task-sync")
 
 
 def _run_consent_flow(config: Config) -> Credentials:
     """Open the browser consent flow and return fresh credentials."""
-    log.info("Opening Google auth in your browser. Sign in and allow Tasks access.")
-    flow = InstalledAppFlow.from_client_secrets_file(config.google_credentials_file, TASKS_SCOPES)
+    log.info("Opening Google auth in your browser. Sign in and allow Tasks + Calendar access.")
+    flow = InstalledAppFlow.from_client_secrets_file(config.google_credentials_file, SCOPES)
     return flow.run_local_server(port=0, open_browser=True)
 
 
@@ -43,7 +43,13 @@ def get_credentials(config: Config) -> Credentials:
     creds: Credentials | None = None
 
     if os.path.exists(config.google_token_file):
-        creds = Credentials.from_authorized_user_file(config.google_token_file, TASKS_SCOPES)
+        creds = Credentials.from_authorized_user_file(config.google_token_file, SCOPES)
+
+    # If the cached token lacks a scope we now need, force a fresh consent.
+    if creds and not creds.has_scopes(SCOPES):
+        log.info("Cached token is missing required scopes; re-authenticating...")
+        _clear_token(config)
+        creds = None
 
     if creds and creds.valid:
         return creds

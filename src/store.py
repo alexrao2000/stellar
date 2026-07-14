@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS task_completions (
     notes        TEXT,
     updated_at   TEXT,
     is_completed INTEGER,
+    source       TEXT DEFAULT 'tasks',
     synced_at    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_task_completions_day ON task_completions(day);
@@ -74,6 +75,14 @@ class SQLiteStore:
         self.path = path
         with sqlite3.connect(self.path) as conn:
             conn.executescript(_SQLITE_DDL)
+            self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Add columns introduced after a DB was first created."""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(task_completions)")}
+        if "source" not in cols:
+            conn.execute("ALTER TABLE task_completions ADD COLUMN source TEXT DEFAULT 'tasks'")
 
     def _upsert(self, table: str, pk: str, rows: list[dict]) -> None:
         if not rows:
