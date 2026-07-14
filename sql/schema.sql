@@ -31,6 +31,14 @@ create table if not exists public.wake_up_log (
     synced_at      timestamptz default now()
 );
 
+-- Single-row heartbeat used by the keepalive job to keep the free-tier project
+-- from pausing (any query counts as activity).
+create table if not exists public.heartbeat (
+    id        integer primary key default 1,
+    last_ping timestamptz default now(),
+    note      text
+);
+
 create table if not exists public.weight_log (
     day              date primary key,
     weight_lbs       numeric,

@@ -121,7 +121,19 @@ launchctl unload ~/Library/LaunchAgents/com.alexr.caltasksync.plist  # to stop
 
 The daily sync runs in CI twice a day (~2am and ~2pm Pacific) via
 [.github/workflows/sync.yml](.github/workflows/sync.yml). This requires the
-Supabase backend (CI has no persistent local file).
+Supabase backend (CI has no persistent local file). Running in CI means the sync
+does not depend on your laptop being awake or online.
+
+### Keeping Supabase awake
+
+Free-tier Supabase projects pause after ~7 days of inactivity. Two things prevent that:
+
+- The twice-daily sync writes to the database, which counts as activity.
+- A separate [keepalive workflow](.github/workflows/keepalive.yml) pings a
+  `heartbeat` table every 2 days. It has **no Google dependency**, so even if the
+  Google token expires and the sync temporarily fails, the project stays awake.
+
+The keepalive only needs the `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` secrets.
 
 ### One-time setup
 
@@ -151,6 +163,7 @@ make sync                          # Pull Google Tasks and store wake/weight dat
 make reauth                        # Force Google re-consent, then sync
 make import-takeout FILE=take.zip  # Backfill full history from a Takeout export
 make migrate-supabase              # Copy local SQLite data into Supabase
+make keepalive                     # Ping Supabase so the free project stays active
 make dashboard                     # Launch Streamlit charts
 make install-scheduler             # Install local launchd job (optional)
 make help                          # List targets

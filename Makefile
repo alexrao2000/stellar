@@ -1,4 +1,4 @@
-.PHONY: sync reauth dashboard install-scheduler probe-calendar import-takeout migrate-supabase help
+.PHONY: sync reauth dashboard install-scheduler probe-calendar import-takeout migrate-supabase keepalive help
 
 VENV := .venv/bin
 PYTHON := $(VENV)/python
@@ -11,6 +11,7 @@ help:
 	@echo "  make probe-calendar          Inspect how recurring tasks appear in Calendar"
 	@echo "  make import-takeout FILE=... Backfill full history from a Google Takeout export"
 	@echo "  make migrate-supabase        Copy local SQLite data into Supabase"
+	@echo "  make keepalive               Ping Supabase so the free project stays active"
 	@echo "  make dashboard               Launch Streamlit charts"
 	@echo "  make install-scheduler       Install local launchd sync job (optional)"
 
@@ -29,6 +30,9 @@ import-takeout:
 
 migrate-supabase:
 	$(PYTHON) -m src.migrate_to_supabase
+
+keepalive:
+	$(PYTHON) -m src.keepalive
 
 dashboard:
 	$(STREAMLIT) run dashboard/app.py

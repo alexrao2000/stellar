@@ -1,0 +1,34 @@
+name: Supabase keepalive
+
+# Keeps the free-tier Supabase project from pausing. Runs independently of the
+# Google sync so an expired Google token can't cause the project to pause.
+on:
+  schedule:
+    - cron: "17 6 */2 * *"  # every 2 days at 06:17 UTC
+  workflow_dispatch: {}
+
+concurrency:
+  group: supabase-keepalive
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      STORAGE_BACKEND: supabase
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install minimal dependencies
+        run: pip install supabase python-dotenv
+
+      - name: Ping Supabase
+        run: python -m src.keepalive
