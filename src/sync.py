@@ -1,4 +1,4 @@
-"""Entry point: pull Google Tasks -> parse -> store.
+"""Entry point: pull Google Tasks + Calendar history -> parse -> store.
 
 Run:  python -m src.sync
 """
@@ -8,8 +8,19 @@ import logging
 import sys
 from zoneinfo import ZoneInfo
 
+from googleapiclient.errors import HttpError
+
+from .calendar_client import fetch_calendar_events
 from .config import load_config
-from .parsers import WakeUpRow, WeightRow, extract_metrics, to_completion_row
+from .parsers import (
+    WakeUpRow,
+    WeightRow,
+    calendar_event_to_completion,
+    calendar_extract_metrics,
+    extract_metrics,
+    seed_start_weight_rows,
+    to_completion_row,
+)
 from .store import make_store
 from .tasks_client import fetch_tasks
 
@@ -20,17 +31,17 @@ logging.basicConfig(
 log = logging.getLogger("cal-task-sync")
 
 
-def _dedupe_latest(rows: list, tasks_by_id: dict) -> list:
-    """Keep one row per day; if duplicated, prefer the most recently updated task."""
+def _dedupe_latest(rows: list, updated_by_id: dict) -> list:
+    """Keep one row per day; if duplicated, prefer the most recently updated source."""
     best: dict[str, object] = {}
     for row in rows:
         existing = best.get(row.day)
         if existing is None:
             best[row.day] = row
             continue
-        new_updated = tasks_by_id.get(row.source_task_id)
-        old_updated = tasks_by_id.get(existing.source_task_id)
-        if (new_updated or "") >= (old_updated or ""):
+        new_updated = updated_by_id.get(row.source_task_id, "")
+        old_updated = updated_by_id.get(existing.source_task_id, "")
+        if new_updated >= old_updated:
             best[row.day] = row
     return list(best.values())
 
@@ -40,26 +51,52 @@ def run() -> int:
     config.validate()
     tz = ZoneInfo(config.local_timezone)
 
+    # --- Google Tasks (current state + limited completed history) ---
     log.info("Fetching tasks from Google Tasks (backend=%s)...", config.storage_backend)
     tasks = fetch_tasks(config)
     log.info("Fetched %d tasks.", len(tasks))
 
-    tasks_by_id = {t.task_id: (t.updated or "") for t in tasks}
+    # --- Google Calendar (optional; does NOT contain Google Tasks, only events) ---
+    calendar_events: list = []
+    if config.include_calendar_events:
+        try:
+            log.info("Fetching event history from Google Calendar...")
+            calendar_events = fetch_calendar_events(config)
+            log.info("Fetched %d calendar event instances.", len(calendar_events))
+        except HttpError as exc:
+            log.warning(
+                "Calendar fetch failed (%s). If this is 'accessNotConfigured', enable the "
+                "Google Calendar API for your project, then re-run.",
+                exc,
+            )
 
+    updated_by_id: dict[str, str] = {t.task_id: (t.updated or "") for t in tasks}
+    updated_by_id.update({e.event_id: (e.updated or "") for e in calendar_events})
+
+    # --- Completion rows (every task/event instance) ---
     completions = [to_completion_row(t, tz) for t in tasks]
+    completions += [calendar_event_to_completion(e) for e in calendar_events]
 
+    # --- Metric rows from both sources ---
     wake_rows: list[WakeUpRow] = []
     weight_rows: list[WeightRow] = []
     for t in tasks:
-        day = next((c.day for c in completions if c.task_id == t.task_id), None)
+        day = to_completion_row(t, tz).day
         wake, weight = extract_metrics(t, day, config.wake_up_task_title, config.weight_task_title)
         if wake:
             wake_rows.append(wake)
         if weight:
             weight_rows.append(weight)
+    for e in calendar_events:
+        wake, weight = calendar_extract_metrics(e, config.wake_up_task_title, config.weight_task_title)
+        if wake:
+            wake_rows.append(wake)
+        if weight:
+            weight_rows.append(weight)
 
-    wake_rows = _dedupe_latest(wake_rows, tasks_by_id)
-    weight_rows = _dedupe_latest(weight_rows, tasks_by_id)
+    wake_rows = _dedupe_latest(wake_rows, updated_by_id)
+    weight_rows = _dedupe_latest(weight_rows, updated_by_id)
+    weight_rows = seed_start_weight_rows(weight_rows)
 
     store = make_store(config)
     store.upsert_completions(completions)
@@ -67,8 +104,10 @@ def run() -> int:
     store.upsert_weights(weight_rows)
 
     log.info(
-        "Stored %d completions, %d wake-up rows, %d weight rows.",
+        "Stored %d completions (%d tasks + %d calendar), %d wake-up days, %d weight days.",
         len(completions),
+        len(tasks),
+        len(calendar_events),
         len(wake_rows),
         len(weight_rows),
     )
