@@ -24,3 +24,6 @@ venv/
 # Logs
 logs/
 *.log
+
+# Takeout extraction temp
+.takeout_tmp/

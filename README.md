@@ -11,17 +11,34 @@ your **wake-up time** and **weight** over time. Runs on a schedule so the data s
 - Parses notes into:
   - `wake_up_log` from `Wake-up Time: 7:30 AM`
   - `weight_log` from `Start Date+Weight: 8/8/24, 181.9 lbs, Current Weight: 178.2 lbs`
-- Buckets each task to a day by its **due date**, so a task you finish after midnight still
-  counts for the day it was due (handles your nightly-update spillover).
+- Buckets each task to a day (by due/scheduled date), so a task you finish after midnight
+  still counts for the day it was due (handles your nightly-update spillover).
 - Idempotent upserts, so it can run as often as you like (default: hourly).
 - A Streamlit dashboard charts wake-up time and weight.
+
+## Data sources (important)
+
+Google's public APIs do **not** expose the full day-by-day history of recurring tasks:
+
+- **Google Tasks API** (`make sync`): returns your current tasks plus a small set of
+  recently completed ones. Good for keeping data fresh going forward.
+- **Google Calendar API**: does **not** return Google Tasks at all, only real calendar
+  events. It's therefore disabled by default (`INCLUDE_CALENDAR_EVENTS=false`).
+- **Google Takeout** (`make import-takeout`): the only source with the complete history
+  of every completed recurring task instance (with per-day notes). Use it once to backfill
+  years of wake-up times, weights, and completion status.
+
+Typical flow: **import Takeout once** for history, then let the **hourly sync** accumulate
+new days automatically.
 
 ## Architecture
 
 ```
-Google Tasks API  ->  sync.py  ->  parsers  ->  store (SQLite or Supabase)  ->  Streamlit dashboard
-                         ^
-                    launchd (hourly)
+Google Takeout (one-time backfill) --\
+                                      >--> parsers --> store (SQLite or Supabase) --> Streamlit dashboard
+Google Tasks API (hourly, ongoing) --/
+        ^
+   launchd (hourly)
 ```
 
 ## Setup
@@ -69,13 +86,26 @@ or revoked (common for OAuth apps still in **Testing** mode after ~7 days), the 
 make reauth
 ```
 
-### 4. Dashboard
+### 4. Backfill full history from Google Takeout (one-time)
+
+The APIs only expose recent history, so backfill the rest from a Takeout export:
+
+1. Go to https://takeout.google.com/, **Deselect all**, check only **Tasks**, and export.
+2. Import the downloaded ZIP (or the inner `Tasks.json`):
+
+```bash
+make import-takeout FILE=/path/to/takeout-XXXX.zip
+```
+
+This loads every historical wake-up time, weight, and per-day completion into the same tables.
+
+### 5. Dashboard
 
 ```bash
 make dashboard
 ```
 
-### 5. Schedule it (hourly, macOS launchd)
+### 6. Schedule it (hourly, macOS launchd)
 
 ```bash
 make install-scheduler
@@ -90,11 +120,12 @@ launchctl unload ~/Library/LaunchAgents/com.alexr.caltasksync.plist
 ## Make targets
 
 ```bash
-make sync                 # Pull Google Tasks and store wake/weight data
-make reauth               # Force Google re-consent, then sync
-make dashboard            # Launch Streamlit charts
-make install-scheduler    # Install hourly launchd sync job
-make help                 # List targets
+make sync                          # Pull Google Tasks and store wake/weight data
+make reauth                        # Force Google re-consent, then sync
+make import-takeout FILE=take.zip  # Backfill full history from a Takeout export
+make dashboard                     # Launch Streamlit charts
+make install-scheduler             # Install hourly launchd sync job
+make help                          # List targets
 ```
 
 ## Notes / customization
