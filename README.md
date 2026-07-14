@@ -105,17 +105,44 @@ This loads every historical wake-up time, weight, and per-day completion into th
 make dashboard
 ```
 
-### 6. Schedule it (hourly, macOS launchd)
+### 6. Schedule it
+
+Recommended: **GitHub Actions** (runs even when your Mac is off). See
+[Deployment](#deployment-github-actions) below.
+
+Optional local alternative (only runs when the Mac is awake):
 
 ```bash
-make install-scheduler
+make install-scheduler   # macOS launchd job
+launchctl unload ~/Library/LaunchAgents/com.alexr.caltasksync.plist  # to stop
 ```
 
-Logs go to `logs/sync.out.log` and `logs/sync.err.log`. Stop with:
+## Deployment (GitHub Actions)
 
-```bash
-launchctl unload ~/Library/LaunchAgents/com.alexr.caltasksync.plist
-```
+The daily sync runs in CI twice a day (~2am and ~2pm Pacific) via
+[.github/workflows/sync.yml](.github/workflows/sync.yml). This requires the
+Supabase backend (CI has no persistent local file).
+
+### One-time setup
+
+1. Move storage to Supabase:
+   - Restore/unpause the Supabase project, apply [`sql/schema.sql`](sql/schema.sql).
+   - In `.env` set `STORAGE_BACKEND=supabase`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+   - Migrate existing local data: `make migrate-supabase`.
+2. Publish the Google OAuth app (Google Cloud Console -> OAuth consent screen ->
+   Publish). Without this, the app stays in "Testing" mode and refresh tokens expire
+   after ~7 days, breaking the unattended job.
+3. Make sure a valid `token.json` exists locally (`make sync` once).
+4. Add these GitHub repository secrets (Settings -> Secrets and variables -> Actions):
+
+   | Secret | Value |
+   | --- | --- |
+   | `SUPABASE_URL` | your project URL |
+   | `SUPABASE_SERVICE_ROLE_KEY` | service role key |
+   | `GOOGLE_CREDENTIALS_JSON` | full contents of `credentials.json` |
+   | `GOOGLE_TOKEN_JSON` | full contents of `token.json` |
+
+You can trigger a run manually from the Actions tab (workflow_dispatch) to verify.
 
 ## Make targets
 
@@ -123,8 +150,9 @@ launchctl unload ~/Library/LaunchAgents/com.alexr.caltasksync.plist
 make sync                          # Pull Google Tasks and store wake/weight data
 make reauth                        # Force Google re-consent, then sync
 make import-takeout FILE=take.zip  # Backfill full history from a Takeout export
+make migrate-supabase              # Copy local SQLite data into Supabase
 make dashboard                     # Launch Streamlit charts
-make install-scheduler             # Install hourly launchd sync job
+make install-scheduler             # Install local launchd job (optional)
 make help                          # List targets
 ```
 

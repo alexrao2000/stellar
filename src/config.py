@@ -36,6 +36,10 @@ class Config:
     google_token_file: str = field(
         default_factory=lambda: _resolve(os.getenv("GOOGLE_TOKEN_FILE", "token.json"))
     )
+    # For headless/CI runs, credentials and the cached token can be provided inline
+    # as JSON via env vars (GitHub secrets) instead of files on disk.
+    google_credentials_json: str = field(default_factory=lambda: os.getenv("GOOGLE_CREDENTIALS_JSON", ""))
+    google_token_json: str = field(default_factory=lambda: os.getenv("GOOGLE_TOKEN_JSON", ""))
     task_lists: list[str] = field(default_factory=lambda: _split_csv(os.getenv("TASK_LISTS", "")))
     local_timezone: str = field(default_factory=lambda: os.getenv("LOCAL_TIMEZONE", "America/Los_Angeles"))
 
@@ -54,10 +58,10 @@ class Config:
     )
 
     def validate(self) -> None:
-        if not Path(self.google_credentials_file).exists():
+        if not self.google_credentials_json and not Path(self.google_credentials_file).exists():
             raise FileNotFoundError(
-                f"Google credentials file not found at {self.google_credentials_file}. "
-                "Download an OAuth desktop client from Google Cloud and set GOOGLE_CREDENTIALS_FILE."
+                f"Google credentials not found at {self.google_credentials_file} and "
+                "GOOGLE_CREDENTIALS_JSON is unset. Provide one of them."
             )
         if self.storage_backend == "supabase":
             if not self.supabase_url or not self.supabase_key:

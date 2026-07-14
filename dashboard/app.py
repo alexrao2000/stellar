@@ -8,10 +8,13 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+
+CHART_TYPES = ["Scatter + best fit", "Line"]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -44,20 +47,60 @@ def _date_range(days: pd.Series, pad_days: int = 14) -> list[str] | None:
     return [start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")]
 
 
-def _wake_fig(df: pd.DataFrame) -> go.Figure:
+def _best_fit(days: pd.Series, y: pd.Series):
+    """Return (x_endpoints, y_endpoints, slope_per_day) for an OLS best-fit line."""
+    x_ord = days.map(pd.Timestamp.toordinal).to_numpy(dtype=float)
+    y_arr = y.to_numpy(dtype=float)
+    mask = ~np.isnan(x_ord) & ~np.isnan(y_arr)
+    if mask.sum() < 2:
+        return None
+    slope, intercept = np.polyfit(x_ord[mask], y_arr[mask], 1)
+    x_ends = np.array([x_ord[mask].min(), x_ord[mask].max()])
+    y_ends = slope * x_ends + intercept
+    x_dates = [pd.Timestamp.fromordinal(int(round(v))) for v in x_ends]
+    return x_dates, y_ends, slope
+
+
+def _series_trace(df: pd.DataFrame, y_col: str, chart_type: str, name: str, hovertemplate, customdata=None):
+    """Scatter markers (default) or connected line for the primary data series."""
+    mode = "markers" if chart_type == "Scatter + best fit" else "lines+markers"
+    return go.Scatter(
+        x=df["day"],
+        y=df[y_col],
+        mode=mode,
+        marker={"size": 8, "opacity": 0.75},
+        line={"width": 2},
+        hovertemplate=hovertemplate,
+        customdata=customdata,
+        name=name,
+    )
+
+
+def _wake_fig(df: pd.DataFrame, chart_type: str) -> go.Figure:
     fig = go.Figure(
-        data=go.Scatter(
-            x=df["day"],
-            y=df["wake_minutes"],
-            mode="lines+markers",
-            marker={"size": 10},
-            line={"width": 2},
-            hovertemplate="%{x|%b %d, %Y}<br>%{customdata}<extra></extra>",
+        data=_series_trace(
+            df,
+            "wake_minutes",
+            chart_type,
+            "Wake-up",
+            "%{x|%b %d, %Y}<br>%{customdata}<extra></extra>",
             customdata=df["wake_time"],
-            name="Wake-up",
         )
     )
-    # Tick every hour, but zoom y around the data.
+    if chart_type == "Scatter + best fit":
+        fit = _best_fit(df["day"], df["wake_minutes"])
+        if fit:
+            x_dates, y_ends, slope = fit
+            fig.add_trace(
+                go.Scatter(
+                    x=x_dates,
+                    y=y_ends,
+                    mode="lines",
+                    line={"width": 3, "dash": "solid", "color": "#e45756"},
+                    name=f"Trend ({slope * 30:+.1f} min/mo)",
+                    hoverinfo="skip",
+                )
+            )
     y_min = max(0, int(df["wake_minutes"].min()) - 60)
     y_max = min(24 * 60, int(df["wake_minutes"].max()) + 60)
     tick_vals = list(range((y_min // 60) * 60, y_max + 1, 60))
@@ -70,27 +113,41 @@ def _wake_fig(df: pd.DataFrame) -> go.Figure:
     )
     x_range = _date_range(df["day"])
     fig.update_xaxes(title="Date", type="date", range=x_range, tickformat="%b %d\n%Y")
-    fig.update_layout(margin={"t": 20, "b": 40}, height=420, showlegend=False)
+    fig.update_layout(margin={"t": 20, "b": 40}, height=420, showlegend=True,
+                      legend={"orientation": "h", "y": 1.08})
     return fig
 
 
-def _weight_fig(df: pd.DataFrame) -> go.Figure:
+def _weight_fig(df: pd.DataFrame, chart_type: str) -> go.Figure:
     fig = go.Figure(
-        data=go.Scatter(
-            x=df["day"],
-            y=df["weight_lbs"],
-            mode="lines+markers",
-            marker={"size": 10},
-            line={"width": 2},
-            hovertemplate="%{x|%b %d, %Y}<br>%{y:.1f} lbs<extra></extra>",
-            name="Weight",
+        data=_series_trace(
+            df,
+            "weight_lbs",
+            chart_type,
+            "Weight",
+            "%{x|%b %d, %Y}<br>%{y:.1f} lbs<extra></extra>",
         )
     )
+    if chart_type == "Scatter + best fit":
+        fit = _best_fit(df["day"], df["weight_lbs"])
+        if fit:
+            x_dates, y_ends, slope = fit
+            fig.add_trace(
+                go.Scatter(
+                    x=x_dates,
+                    y=y_ends,
+                    mode="lines",
+                    line={"width": 3, "color": "#e45756"},
+                    name=f"Trend ({slope * 30:+.1f} lbs/mo)",
+                    hoverinfo="skip",
+                )
+            )
     y_min = float(df["weight_lbs"].min()) - 5
     y_max = float(df["weight_lbs"].max()) + 5
     fig.update_yaxes(title="Weight (lbs)", range=[y_min, y_max])
     fig.update_xaxes(title="Date", type="date", range=_date_range(df["day"]), tickformat="%b %d\n%Y")
-    fig.update_layout(margin={"t": 20, "b": 40}, height=420, showlegend=False)
+    fig.update_layout(margin={"t": 20, "b": 40}, height=420, showlegend=True,
+                      legend={"orientation": "h", "y": 1.08})
     return fig
 
 
@@ -112,16 +169,22 @@ with col1:
     if wake.empty:
         st.info("No wake-up data yet. Run the sync first.")
     else:
-        st.plotly_chart(_wake_fig(wake), use_container_width=True)
+        wake_type = st.radio(
+            "Chart type", CHART_TYPES, horizontal=True, key="wake_chart_type"
+        )
+        st.plotly_chart(_wake_fig(wake, wake_type), use_container_width=True)
         st.metric("Latest wake-up", str(wake.iloc[-1]["wake_time"])[:5])
-        st.caption(f"{len(wake)} logged day(s). Google Tasks keeps little history of recurring dailies — new syncs will add points over time.")
+        st.caption(f"{len(wake)} logged day(s).")
 
 with col2:
     st.subheader("Weight over time")
     if weight.empty:
         st.info("No weight data yet. Run the sync first.")
     else:
-        st.plotly_chart(_weight_fig(weight), use_container_width=True)
+        weight_type = st.radio(
+            "Chart type", CHART_TYPES, horizontal=True, key="weight_chart_type"
+        )
+        st.plotly_chart(_weight_fig(weight, weight_type), use_container_width=True)
         latest = weight.iloc[-1]
         delta = None
         if pd.notna(latest.get("start_weight_lbs")):

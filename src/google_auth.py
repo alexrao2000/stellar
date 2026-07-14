@@ -32,14 +32,27 @@ def _clear_token(config: Config) -> None:
         log.info("Removed stale token at %s", config.google_token_file)
 
 
+def _materialize_inline_secrets(config: Config) -> None:
+    """Write inline JSON secrets (from env vars) to their file paths for CI use."""
+    if config.google_credentials_json and not os.path.exists(config.google_credentials_file):
+        with open(config.google_credentials_file, "w", encoding="utf-8") as f:
+            f.write(config.google_credentials_json)
+    if config.google_token_json and not os.path.exists(config.google_token_file):
+        with open(config.google_token_file, "w", encoding="utf-8") as f:
+            f.write(config.google_token_json)
+
+
 def get_credentials(config: Config) -> Credentials:
     """Return valid OAuth credentials.
 
+    - Materializes inline JSON secrets (CI) to files if provided.
     - Uses cached token.json when still valid.
     - Refreshes the access token when expired (and saves the refreshed token).
     - If refresh fails (revoked / expired refresh token), deletes the cache and
-      opens the browser consent link again.
+      opens the browser consent link again (only possible in an interactive env).
     """
+    _materialize_inline_secrets(config)
+
     creds: Credentials | None = None
 
     if os.path.exists(config.google_token_file):
@@ -67,6 +80,13 @@ def get_credentials(config: Config) -> Credentials:
             creds = None
 
     # No usable token (missing, no refresh_token, or refresh failed).
+    if os.getenv("CI") or os.getenv("HEADLESS"):
+        raise RuntimeError(
+            "No valid Google token and running headless (CI). The refresh token is "
+            "likely expired/revoked. Re-run 'make sync' locally to re-consent, then "
+            "update the GOOGLE_TOKEN_JSON secret. (Publish the OAuth app to stop weekly "
+            "expiry.)"
+        )
     creds = _run_consent_flow(config)
     _save_token(config, creds)
     log.info("Google auth complete; token saved to %s", config.google_token_file)
