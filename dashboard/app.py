@@ -191,6 +191,79 @@ def _stat_row(items: list[tuple[str, str, str | None]]) -> None:
         col.metric(label, value, delta=delta)
 
 
+DONE_COLOR = "#2EA043"
+MISS_COLOR = "#E5534B"
+
+
+def _consistency_overview_fig(deduped: pd.DataFrame, min_occ: int):
+    """Horizontal bar of completion rate per task, ranked worst-first."""
+    g = (
+        deduped.groupby("title")["is_completed"]
+        .agg(rate="mean", n="count")
+        .reset_index()
+    )
+    g = g[g["n"] >= min_occ].sort_values("rate")
+    if g.empty:
+        return None, g
+    g["pct"] = g["rate"] * 100
+    fig = go.Figure(go.Bar(
+        x=g["pct"], y=g["title"], orientation="h",
+        marker={
+            "color": g["pct"],
+            "colorscale": [[0, MISS_COLOR], [0.5, "#E3B341"], [1, DONE_COLOR]],
+            "cmin": 0, "cmax": 100,
+        },
+        customdata=g["n"],
+        hovertemplate="%{y}: %{x:.0f}% completed (%{customdata} days)<extra></extra>",
+    ))
+    fig.update_xaxes(title="Completion rate (%)", range=[0, 100])
+    fig.update_yaxes(title=None)
+    return _style(fig, height=max(240, 26 * len(g))), g
+
+
+def _streaks(is_completed: list[bool]) -> tuple[int, int]:
+    """Return (longest_streak, current_trailing_streak) of completions."""
+    longest = run = 0
+    for v in is_completed:
+        run = run + 1 if v else 0
+        longest = max(longest, run)
+    current = 0
+    for v in reversed(is_completed):
+        if v:
+            current += 1
+        else:
+            break
+    return longest, current
+
+
+def _calendar_heatmap_fig(daily: pd.DataFrame) -> go.Figure:
+    """GitHub-style calendar: green=completed, red=missed, blank=not scheduled."""
+    dates = pd.to_datetime(daily["day_only"])
+    start = dates.min()
+    start_monday = (start - pd.Timedelta(days=int(start.weekday()))).normalize()
+    end = dates.max()
+    n_weeks = ((end.normalize() - start_monday).days // 7) + 1
+
+    z = [[None] * n_weeks for _ in range(7)]
+    text = [[""] * n_weeks for _ in range(7)]
+    for d, done in zip(dates, daily["is_completed"]):
+        wi = (d.normalize() - start_monday).days // 7
+        wd = d.weekday()
+        z[wd][wi] = 1.0 if done else 0.0
+        text[wd][wi] = f"{d:%b %d, %Y} — {'Completed' if done else 'Missed'}"
+
+    x = [start_monday + pd.Timedelta(weeks=i) for i in range(n_weeks)]
+    y = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    fig = go.Figure(go.Heatmap(
+        z=z, x=x, y=y, text=text, hoverinfo="text",
+        colorscale=[[0, MISS_COLOR], [1, DONE_COLOR]],
+        zmin=0, zmax=1, xgap=3, ygap=3, showscale=False,
+    ))
+    fig.update_yaxes(autorange="reversed", title=None)
+    fig.update_xaxes(title=None, tickformat="%b %Y")
+    return _style(fig, height=220)
+
+
 # --------------------------------------------------------------------------- #
 # Header
 # --------------------------------------------------------------------------- #
@@ -315,3 +388,46 @@ else:
                 deduped.sort_values(["day_only", "title"], ascending=[False, True]),
                 use_container_width=True,
             )
+
+    st.divider()
+
+    # ----------------------------------------------------------------------- #
+    # Per-task consistency
+    # ----------------------------------------------------------------------- #
+    st.subheader("Task consistency")
+    st.caption("How reliably each task got done — and when it slipped.")
+
+    min_occ = st.slider(
+        "Only include tasks with at least this many scheduled days",
+        min_value=1, max_value=60, value=10, key="min_occ",
+    )
+    overview_fig, ranked = _consistency_overview_fig(deduped, min_occ)
+    if overview_fig is None:
+        st.info("No tasks meet the threshold. Lower the slider.")
+    else:
+        st.plotly_chart(overview_fig, use_container_width=True)
+
+        # Default to the most-scheduled task (usually a core daily habit).
+        task_options = ranked.sort_values("n", ascending=False)["title"].tolist()
+        selected = st.selectbox("Inspect a task", task_options, key="consistency_task")
+
+        task_daily = (
+            deduped[deduped["title"] == selected]
+            .dropna(subset=["day_only"])
+            .drop_duplicates("day_only")
+            .sort_values("day_only")
+        )
+        flags = task_daily["is_completed"].tolist()
+        completed_n = int(sum(flags))
+        missed_n = len(flags) - completed_n
+        longest, current = _streaks(flags)
+        _stat_row([
+            ("Scheduled days", f"{len(flags):,}", None),
+            ("Completed", f"{completed_n:,}", None),
+            ("Missed", f"{missed_n:,}", f"{missed_n / len(flags) * 100:.0f}% of days" if flags else None),
+            ("Completion rate", f"{completed_n / len(flags) * 100:.0f}%" if flags else "—", None),
+            ("Longest streak", f"{longest} days", None),
+            ("Current streak", f"{current} days", None),
+        ])
+        st.plotly_chart(_calendar_heatmap_fig(task_daily), use_container_width=True)
+        st.caption("Green = completed · Red = missed · Blank = not scheduled that day.")
