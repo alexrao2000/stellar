@@ -28,6 +28,31 @@ def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def detect_local_timezone() -> str | None:
+    """Best-effort IANA timezone name for this machine, or None if undetectable."""
+    # 1. Explicit override wins.
+    env_tz = os.getenv("LOCAL_TIMEZONE", "").strip()
+    if env_tz:
+        return env_tz
+    # 2. tzlocal is the most reliable cross-platform source.
+    try:
+        from tzlocal import get_localzone_name
+
+        name = get_localzone_name()
+        if name:
+            return name
+    except Exception:  # noqa: BLE001 - fall through to other methods
+        pass
+    # 3. On macOS/Linux, /etc/localtime is a symlink into the zoneinfo tree.
+    try:
+        link = os.readlink("/etc/localtime")
+        if "zoneinfo/" in link:
+            return link.split("zoneinfo/", 1)[1]
+    except OSError:
+        pass
+    return None
+
+
 @dataclass
 class Config:
     google_credentials_file: str = field(
@@ -41,7 +66,8 @@ class Config:
     google_credentials_json: str = field(default_factory=lambda: os.getenv("GOOGLE_CREDENTIALS_JSON", ""))
     google_token_json: str = field(default_factory=lambda: os.getenv("GOOGLE_TOKEN_JSON", ""))
     task_lists: list[str] = field(default_factory=lambda: _split_csv(os.getenv("TASK_LISTS", "")))
-    local_timezone: str = field(default_factory=lambda: os.getenv("LOCAL_TIMEZONE", "America/Los_Angeles"))
+    # Auto-detected when LOCAL_TIMEZONE is unset; falls back to UTC if undetectable.
+    local_timezone: str = field(default_factory=lambda: detect_local_timezone() or "UTC")
 
     storage_backend: str = field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "supabase").lower())
     supabase_url: str = field(default_factory=lambda: os.getenv("SUPABASE_URL", ""))

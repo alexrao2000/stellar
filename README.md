@@ -173,5 +173,8 @@ make help                          # List targets
 
 - The metric tasks are matched by title via `WAKE_UP_TASK_TITLE` and `WEIGHT_TASK_TITLE` in `.env`.
 - Limit which lists are synced with `TASK_LISTS=Daily,Health` (empty = all lists).
-- Set `LOCAL_TIMEZONE` for correct day bucketing of completed timestamps.
+- Timezone for day-bucketing is resolved in this order: `LOCAL_TIMEZONE` override →
+  your **Google Calendar timezone setting** → machine-detected → UTC. The Calendar
+  setting is authoritative and keeps bucketing correct even on UTC CI runners.
+- The dashboard has a "Sync now" button to pull fresh data from Google Tasks on demand.
 - `credentials.json`, `token.json`, and `.env` are gitignored.

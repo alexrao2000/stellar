@@ -23,6 +23,7 @@ from .parsers import (
 )
 from .store import make_store
 from .tasks_client import fetch_tasks
+from .timezones import resolve_timezone
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,7 +50,7 @@ def _dedupe_latest(rows: list, updated_by_id: dict) -> list:
 def run() -> int:
     config = load_config()
     config.validate()
-    tz = ZoneInfo(config.local_timezone)
+    tz = ZoneInfo(resolve_timezone(config))
 
     # --- Google Tasks (current state + limited completed history) ---
     log.info("Fetching tasks from Google Tasks (backend=%s)...", config.storage_backend)

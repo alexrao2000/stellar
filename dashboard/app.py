@@ -4,9 +4,11 @@ Run:  streamlit run dashboard/app.py
 """
 from __future__ import annotations
 
+import os
 import sys
 from datetime import timedelta
 from pathlib import Path
+from zoneinfo import available_timezones
 
 import numpy as np
 import pandas as pd
@@ -18,14 +20,52 @@ CHART_TYPES = ["Scatter + best fit", "Line"]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.config import load_config  # noqa: E402
+from src.config import detect_local_timezone, load_config  # noqa: E402
 from src.read import get_completions, get_wake_ups, get_weights  # noqa: E402
+from src.timezones import resolve_timezone  # noqa: E402
 
 st.set_page_config(page_title="cal-task-sync", layout="wide")
+
+# Resolve timezone: auto-detect, else let the user pick. The choice is applied to
+# the config used for this session (and any manual sync triggered below).
+_detected_tz = detect_local_timezone()
+if not _detected_tz:
+    _common = [
+        "America/Los_Angeles", "America/Denver", "America/Chicago",
+        "America/New_York", "UTC", "Europe/London", "Europe/Berlin",
+        "Asia/Kolkata", "Asia/Shanghai", "Asia/Tokyo", "Australia/Sydney",
+    ]
+    _all = sorted(available_timezones())
+    with st.sidebar:
+        st.warning("Could not auto-detect your timezone. Please pick one.")
+        _choice = st.selectbox(
+            "Timezone", options=_common + ["--- all ---"] + _all, index=0, key="tz_choice"
+        )
+    os.environ["LOCAL_TIMEZONE"] = _choice if _choice != "--- all ---" else "UTC"
+
 config = load_config()
 
 st.title("Daily Tasks: Wake Time & Weight")
-st.caption(f"Storage backend: {config.storage_backend}")
+
+_active_tz = resolve_timezone(config, allow_google=False)
+_top_left, _top_right = st.columns([3, 1])
+with _top_left:
+    st.caption(
+        f"Storage backend: {config.storage_backend}  |  Timezone: {_active_tz} "
+        "(sync uses your Google Calendar timezone)"
+    )
+with _top_right:
+    if st.button("Sync now", type="primary", use_container_width=True):
+        with st.spinner("Running sync from Google Tasks..."):
+            try:
+                from src.sync import run as run_sync
+
+                run_sync()
+                st.cache_data.clear()
+                st.success("Sync complete.")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Sync failed: {exc}")
 
 
 def _minutes_to_label(minutes: float) -> str:

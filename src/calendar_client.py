@@ -39,6 +39,21 @@ def _build_service(config: Config):
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 
+def fetch_calendar_timezone(config: Config) -> str | None:
+    """Return the user's Google Calendar timezone setting (IANA name), or None.
+
+    This is the authoritative timezone for bucketing tasks into days, independent
+    of whatever machine (or UTC CI runner) the sync happens to run on.
+    """
+    try:
+        service = _build_service(config)
+        resp = service.settings().get(setting="timezone").execute()
+        return resp.get("value")
+    except Exception as exc:  # noqa: BLE001 - fall back to other tz sources
+        log.warning("Could not fetch Google Calendar timezone (%s).", exc)
+        return None
+
+
 def _list_calendars(service) -> list[dict]:
     calendars: list[dict] = []
     page_token = None

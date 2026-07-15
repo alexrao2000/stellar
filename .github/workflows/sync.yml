@@ -19,7 +19,8 @@ jobs:
     env:
       CI: "true"
       STORAGE_BACKEND: supabase
-      LOCAL_TIMEZONE: America/Los_Angeles
+      # LOCAL_TIMEZONE intentionally unset: the sync resolves the timezone from
+      # the Google Calendar setting so day-bucketing is correct on UTC runners.
       INCLUDE_CALENDAR_EVENTS: "false"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

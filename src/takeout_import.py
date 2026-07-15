@@ -26,6 +26,7 @@ from .parsers import (
     seed_start_weight_rows,
 )
 from .store import make_store
+from .timezones import resolve_timezone
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("cal-task-sync")
@@ -76,7 +77,7 @@ def _iter_tasks(data: dict):
 def run(path: Path) -> int:
     config = load_config()
     config.validate()
-    tz = ZoneInfo(config.local_timezone)
+    tz = ZoneInfo(resolve_timezone(config))
 
     data = _load_tasks_json(path)
     log.info("Loaded Takeout export from %s", path)
