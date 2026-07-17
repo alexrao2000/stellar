@@ -24,8 +24,8 @@ jobs:
       INCLUDE_CALENDAR_EVENTS: "false"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-      GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
+      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_FILE }}
+      GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_FILE }}
     steps:
       - uses: actions/checkout@v4
 
