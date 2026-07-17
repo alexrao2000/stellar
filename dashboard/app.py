@@ -21,7 +21,6 @@ CHART_TYPES = ["Scatter + best fit", "Line"]
 ACCENT = "#4C6FFF"     # primary data
 TREND = "#F4661B"      # trend / best-fit lines
 GRID = "rgba(0,0,0,0.06)"
-ROLLING_WINDOW = 14    # days, for the completion trend line
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -160,30 +159,6 @@ def _weight_fig(df: pd.DataFrame, chart_type: str) -> go.Figure:
     return _style(fig)
 
 
-def _completion_fig(by_day: pd.DataFrame) -> go.Figure:
-    """Bar chart of completed tasks/day plus a rolling-average trend line."""
-    # Fill missing days with 0 so the rolling average is honest.
-    full = pd.date_range(by_day["day"].min(), by_day["day"].max(), freq="D")
-    series = by_day.set_index("day")["completed"].reindex(full, fill_value=0)
-    rolling = series.rolling(ROLLING_WINDOW, min_periods=1).mean()
-
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=series.index, y=series.values, name="Completed",
-        marker={"color": ACCENT, "opacity": 0.35},
-        hovertemplate="%{x|%b %d, %Y}<br>%{y} tasks<extra></extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        x=rolling.index, y=rolling.values, mode="lines",
-        line={"width": 3, "color": TREND},
-        name=f"{ROLLING_WINDOW}-day average",
-        hovertemplate="%{x|%b %d, %Y}<br>%{y:.1f} avg<extra></extra>",
-    ))
-    fig.update_yaxes(title="tasks / day")
-    fig.update_xaxes(type="date", tickformat="%b %Y")
-    return _style(fig, height=340)
-
-
 def _stat_row(items: list[tuple[str, str, str | None]]) -> None:
     """Render a row of metrics: list of (label, value, delta)."""
     cols = st.columns(len(items))
@@ -213,10 +188,15 @@ def _consistency_overview_fig(deduped: pd.DataFrame, min_occ: int):
             "colorscale": [[0, MISS_COLOR], [0.5, "#E3B341"], [1, DONE_COLOR]],
             "cmin": 0, "cmax": 100,
         },
+        text=g["pct"].map(lambda v: f"{v:.0f}%"),
+        texttemplate="%{text}",
+        textposition="outside",
+        cliponaxis=False,
+        textfont={"size": 13, "color": "#333"},
         customdata=g["n"],
-        hovertemplate="%{y}: %{x:.0f}% completed (%{customdata} days)<extra></extra>",
+        hovertemplate="%{y}: %{x:.0f}% completed (%{customdata} scheduled days)<extra></extra>",
     ))
-    fig.update_xaxes(title="Completion rate (%)", range=[0, 100])
+    fig.update_xaxes(title="Completion rate (%)", range=[0, 108], ticksuffix="%")
     fig.update_yaxes(title=None)
     return _style(fig, height=max(240, 26 * len(g))), g
 
@@ -297,69 +277,9 @@ if not weight.empty:
     weight = weight.copy()
     weight["day"] = pd.to_datetime(weight["day"]).dt.normalize()
 
-# --------------------------------------------------------------------------- #
-# Weight
-# --------------------------------------------------------------------------- #
-st.subheader("Weight")
-if weight.empty:
-    st.info("No weight data yet. Run the sync first.")
-else:
-    latest = weight.iloc[-1]
-    peak = weight.loc[weight["weight_lbs"].idxmax()]
-    floor = weight.loc[weight["weight_lbs"].idxmin()]
-    avg = weight["weight_lbs"].mean()
-    start_delta = None
-    if pd.notna(latest.get("start_weight_lbs")):
-        start_delta = f"{float(latest['weight_lbs']) - float(latest['start_weight_lbs']):+.1f} vs start"
-    recent = weight[weight["day"] >= latest["day"] - pd.Timedelta(days=30)]
-    mo_delta = None
-    if len(recent) >= 2:
-        mo_delta = f"{float(recent.iloc[-1]['weight_lbs']) - float(recent.iloc[0]['weight_lbs']):+.1f} in 30d"
-
-    _stat_row([
-        ("Current", f"{latest['weight_lbs']:.1f} lbs", start_delta),
-        ("Peak", f"{peak['weight_lbs']:.1f} lbs", peak["day"].strftime("%b %d, %Y")),
-        ("Floor", f"{floor['weight_lbs']:.1f} lbs", floor["day"].strftime("%b %d, %Y")),
-        ("Average", f"{avg:.1f} lbs", None),
-        ("Last 30 days", f"{recent.iloc[-1]['weight_lbs']:.1f} lbs" if len(recent) else "—", mo_delta),
-    ])
-    weight_type = st.radio("Chart type", CHART_TYPES, horizontal=True,
-                           key="weight_chart_type", label_visibility="collapsed")
-    st.plotly_chart(_weight_fig(weight, weight_type), use_container_width=True)
-    st.caption(f"{len(weight)} logged day(s).")
-
-st.divider()
-
-# --------------------------------------------------------------------------- #
-# Wake-up time
-# --------------------------------------------------------------------------- #
-st.subheader("Wake-up time")
-if wake.empty:
-    st.info("No wake-up data yet. Run the sync first.")
-else:
-    avg_min = wake["wake_minutes"].mean()
-    earliest = wake.loc[wake["wake_minutes"].idxmin()]
-    latest_rise = wake.loc[wake["wake_minutes"].idxmax()]
-    _stat_row([
-        ("Latest logged", str(wake.iloc[-1]["wake_time"])[:5], wake.iloc[-1]["day"].strftime("%b %d, %Y")),
-        ("Average", _minutes_to_label(avg_min), None),
-        ("Earliest", str(earliest["wake_time"])[:5], earliest["day"].strftime("%b %d, %Y")),
-        ("Latest riser", str(latest_rise["wake_time"])[:5], latest_rise["day"].strftime("%b %d, %Y")),
-    ])
-    wake_type = st.radio("Chart type", CHART_TYPES, horizontal=True,
-                         key="wake_chart_type", label_visibility="collapsed")
-    st.plotly_chart(_wake_fig(wake, wake_type), use_container_width=True)
-    st.caption(f"{len(wake)} logged day(s). Lower on the chart = earlier.")
-
-st.divider()
-
-# --------------------------------------------------------------------------- #
-# Task completion
-# --------------------------------------------------------------------------- #
-st.subheader("Task completion")
-if completions.empty:
-    st.info("No task data yet. Run the sync first.")
-else:
+# Prepare deduped task rows once (used by Consistency and Data tabs).
+deduped = pd.DataFrame()
+if not completions.empty:
     deduped = completions.dropna(subset=["day"]).copy()
     deduped["is_completed"] = deduped["is_completed"].astype(bool)
     deduped["day_only"] = deduped["day"].dt.date
@@ -367,67 +287,175 @@ else:
         deduped.sort_values("is_completed")
         .drop_duplicates(subset=["day_only", "title"], keep="last")
     )
-    done = deduped[deduped["is_completed"]]
-    if done.empty:
-        st.info("No completed tasks recorded yet.")
-    else:
-        by_day = done.groupby("day_only").size().reset_index(name="completed")
-        by_day.columns = ["day", "completed"]
-        by_day["day"] = pd.to_datetime(by_day["day"])
 
-        best = by_day.loc[by_day["completed"].idxmax()]
+tab_trends, tab_consistency, tab_data = st.tabs(["Trends", "Consistency", "Data"])
+
+# --------------------------------------------------------------------------- #
+# Trends: weight + wake-up
+# --------------------------------------------------------------------------- #
+with tab_trends:
+    st.subheader("Weight")
+    if weight.empty:
+        st.info("No weight data yet. Run the sync first.")
+    else:
+        latest = weight.iloc[-1]
+        peak = weight.loc[weight["weight_lbs"].idxmax()]
+        floor = weight.loc[weight["weight_lbs"].idxmin()]
+        avg = weight["weight_lbs"].mean()
+        start_delta = None
+        if pd.notna(latest.get("start_weight_lbs")):
+            start_delta = f"{float(latest['weight_lbs']) - float(latest['start_weight_lbs']):+.1f} vs start"
+        recent = weight[weight["day"] >= latest["day"] - pd.Timedelta(days=30)]
+        mo_delta = None
+        if len(recent) >= 2:
+            mo_delta = f"{float(recent.iloc[-1]['weight_lbs']) - float(recent.iloc[0]['weight_lbs']):+.1f} in 30d"
+
         _stat_row([
-            ("Total completed", f"{int(done.shape[0]):,}", None),
-            ("Active days", f"{by_day.shape[0]:,}", None),
-            ("Avg / day", f"{by_day['completed'].mean():.1f}", None),
-            ("Best day", f"{int(best['completed'])} tasks", best["day"].strftime("%b %d, %Y")),
+            ("Current", f"{latest['weight_lbs']:.1f} lbs", start_delta),
+            ("Peak", f"{peak['weight_lbs']:.1f} lbs", peak["day"].strftime("%b %d, %Y")),
+            ("Floor", f"{floor['weight_lbs']:.1f} lbs", floor["day"].strftime("%b %d, %Y")),
+            ("Average", f"{avg:.1f} lbs", None),
+            ("Last 30 days", f"{recent.iloc[-1]['weight_lbs']:.1f} lbs" if len(recent) else "—", mo_delta),
         ])
-        st.plotly_chart(_completion_fig(by_day), use_container_width=True)
-        with st.expander("Browse all task records"):
-            st.dataframe(
-                deduped.sort_values(["day_only", "title"], ascending=[False, True]),
-                use_container_width=True,
-            )
+        weight_type = st.radio("Chart type", CHART_TYPES, horizontal=True,
+                               key="weight_chart_type", label_visibility="collapsed")
+        st.plotly_chart(_weight_fig(weight, weight_type), use_container_width=True)
+        st.caption(f"{len(weight)} logged day(s).")
 
     st.divider()
 
-    # ----------------------------------------------------------------------- #
-    # Per-task consistency
-    # ----------------------------------------------------------------------- #
-    st.subheader("Task consistency")
-    st.caption("How reliably each task got done — and when it slipped.")
-
-    min_occ = st.slider(
-        "Only include tasks with at least this many scheduled days",
-        min_value=1, max_value=60, value=10, key="min_occ",
-    )
-    overview_fig, ranked = _consistency_overview_fig(deduped, min_occ)
-    if overview_fig is None:
-        st.info("No tasks meet the threshold. Lower the slider.")
+    st.subheader("Wake-up time")
+    if wake.empty:
+        st.info("No wake-up data yet. Run the sync first.")
     else:
-        st.plotly_chart(overview_fig, use_container_width=True)
-
-        # Default to the most-scheduled task (usually a core daily habit).
-        task_options = ranked.sort_values("n", ascending=False)["title"].tolist()
-        selected = st.selectbox("Inspect a task", task_options, key="consistency_task")
-
-        task_daily = (
-            deduped[deduped["title"] == selected]
-            .dropna(subset=["day_only"])
-            .drop_duplicates("day_only")
-            .sort_values("day_only")
-        )
-        flags = task_daily["is_completed"].tolist()
-        completed_n = int(sum(flags))
-        missed_n = len(flags) - completed_n
-        longest, current = _streaks(flags)
+        avg_min = wake["wake_minutes"].mean()
+        earliest = wake.loc[wake["wake_minutes"].idxmin()]
+        latest_rise = wake.loc[wake["wake_minutes"].idxmax()]
         _stat_row([
-            ("Scheduled days", f"{len(flags):,}", None),
-            ("Completed", f"{completed_n:,}", None),
-            ("Missed", f"{missed_n:,}", f"{missed_n / len(flags) * 100:.0f}% of days" if flags else None),
-            ("Completion rate", f"{completed_n / len(flags) * 100:.0f}%" if flags else "—", None),
-            ("Longest streak", f"{longest} days", None),
-            ("Current streak", f"{current} days", None),
+            ("Latest logged", str(wake.iloc[-1]["wake_time"])[:5], wake.iloc[-1]["day"].strftime("%b %d, %Y")),
+            ("Average", _minutes_to_label(avg_min), None),
+            ("Earliest", str(earliest["wake_time"])[:5], earliest["day"].strftime("%b %d, %Y")),
+            ("Latest riser", str(latest_rise["wake_time"])[:5], latest_rise["day"].strftime("%b %d, %Y")),
         ])
-        st.plotly_chart(_calendar_heatmap_fig(task_daily), use_container_width=True)
-        st.caption("Green = completed · Red = missed · Blank = not scheduled that day.")
+        wake_type = st.radio("Chart type", CHART_TYPES, horizontal=True,
+                             key="wake_chart_type", label_visibility="collapsed")
+        st.plotly_chart(_wake_fig(wake, wake_type), use_container_width=True)
+        st.caption(f"{len(wake)} logged day(s). Lower on the chart = earlier.")
+
+# --------------------------------------------------------------------------- #
+# Consistency: overview ranking + per-task deep-dive
+# --------------------------------------------------------------------------- #
+with tab_consistency:
+    if deduped.empty:
+        st.info("No task data yet. Run the sync first.")
+    else:
+        done = deduped[deduped["is_completed"]]
+        best_day = None
+        by_day = done.groupby("day_only").size().reset_index(name="completed")
+        by_day.columns = ["day", "completed"]
+        if not by_day.empty:
+            by_day["day"] = pd.to_datetime(by_day["day"])
+            best_day = by_day.loc[by_day["completed"].idxmax()]
+        _stat_row([
+            ("Total completed", f"{int(done.shape[0]):,}", None),
+            ("Active days", f"{by_day.shape[0]:,}", None),
+            ("Avg / day", f"{by_day['completed'].mean():.1f}" if not by_day.empty else "—", None),
+            ("Best day", f"{int(best_day['completed'])} tasks" if best_day is not None else "—",
+             best_day["day"].strftime("%b %d, %Y") if best_day is not None else None),
+        ])
+
+        st.divider()
+        st.subheader("Task consistency")
+        st.caption("How reliably each task got done — and when it slipped.")
+
+        min_occ = st.slider(
+            "Only include tasks with at least this many scheduled days",
+            min_value=1, max_value=60, value=10, key="min_occ",
+        )
+        overview_fig, ranked = _consistency_overview_fig(deduped, min_occ)
+        if overview_fig is None:
+            st.info("No tasks meet the threshold. Lower the slider.")
+        else:
+            st.plotly_chart(overview_fig, use_container_width=True)
+
+            task_options = ranked.sort_values("n", ascending=False)["title"].tolist()
+            selected = st.selectbox("Inspect a task", task_options, key="consistency_task")
+
+            task_daily = (
+                deduped[deduped["title"] == selected]
+                .dropna(subset=["day_only"])
+                .drop_duplicates("day_only")
+                .sort_values("day_only")
+            )
+            flags = task_daily["is_completed"].tolist()
+            completed_n = int(sum(flags))
+            missed_n = len(flags) - completed_n
+            longest, current = _streaks(flags)
+            rate = completed_n / len(flags) * 100 if flags else 0.0
+            miss_rate = missed_n / len(flags) * 100 if flags else 0.0
+
+            # Prominent completion-rate headline so it's never mistaken for a count.
+            rate_color = DONE_COLOR if rate >= 80 else ("#E3B341" if rate >= 50 else MISS_COLOR)
+            rate_col, bar_col = st.columns([1, 3])
+            with rate_col:
+                st.markdown(
+                    f"<div style='line-height:1'>"
+                    f"<span style='font-size:3rem;font-weight:700;color:{rate_color}'>{rate:.0f}%</span>"
+                    f"<div style='color:#888;font-size:0.9rem'>completed · {miss_rate:.0f}% missed</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with bar_col:
+                st.progress(rate / 100)
+                st.caption(f"{selected}: {completed_n:,} of {len(flags):,} scheduled days")
+
+            # Counts kept clearly separate and labeled with units.
+            _stat_row([
+                ("Scheduled days", f"{len(flags):,}", None),
+                ("Completed days", f"{completed_n:,}", None),
+                ("Missed days", f"{missed_n:,}", None),
+                ("Longest streak", f"{longest} days", None),
+                ("Current streak", f"{current} days", None),
+            ])
+            st.plotly_chart(_calendar_heatmap_fig(task_daily), use_container_width=True)
+            st.caption("Green = completed · Red = missed · Blank = not scheduled that day.")
+
+# --------------------------------------------------------------------------- #
+# Data: full, paginated task records
+# --------------------------------------------------------------------------- #
+with tab_data:
+    if deduped.empty:
+        st.info("No task data yet. Run the sync first.")
+    else:
+        table = deduped.sort_values(["day_only", "title"], ascending=[False, True])
+        table = table[["day_only", "title", "is_completed", "status", "notes", "source"]]
+
+        ctrl_l, ctrl_r = st.columns([1, 1])
+        with ctrl_l:
+            page_size = st.selectbox("Rows per page", [25, 50, 100, 200], index=1, key="page_size")
+        total = len(table)
+        num_pages = max(1, -(-total // page_size))  # ceil
+        with ctrl_r:
+            page = st.number_input(
+                f"Page (1–{num_pages})", min_value=1, max_value=num_pages, value=1, step=1, key="page",
+            )
+        start = (int(page) - 1) * page_size
+        page_df = table.iloc[start:start + page_size]
+        st.caption(f"Showing {start + 1:,}–{min(start + page_size, total):,} of {total:,} records")
+        # Height scales with rows so the table expands (page scrolls) instead of
+        # collapsing into a small internal scroll area.
+        row_h = 35
+        st.dataframe(
+            page_df,
+            use_container_width=True,
+            hide_index=True,
+            height=row_h * (len(page_df) + 1) + 3,
+            column_config={
+                "day_only": "Date",
+                "title": "Task",
+                "is_completed": "Done",
+                "status": "Status",
+                "notes": "Notes",
+                "source": "Source",
+            },
+        )

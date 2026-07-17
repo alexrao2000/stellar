@@ -1,0 +1,10 @@
+[server]
+# Auto-rerun the app whenever a source file changes (needs the watchdog package).
+runOnSave = true
+fileWatcherType = "auto"
+headless = true
+
+[runner]
+# Re-import changed local modules (e.g. src/*.py) on each rerun so edits there
+# are picked up without restarting the server.
+fastReruns = true
