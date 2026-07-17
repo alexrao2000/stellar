@@ -48,3 +48,10 @@ create table if not exists public.weight_log (
     source_task_id   text,
     synced_at        timestamptz default now()
 );
+
+-- Lock down PostgREST for anon/authenticated. The sync and keepalive jobs use
+-- the service_role key, which bypasses RLS.
+alter table public.task_completions enable row level security;
+alter table public.wake_up_log enable row level security;
+alter table public.weight_log enable row level security;
+alter table public.heartbeat enable row level security;
