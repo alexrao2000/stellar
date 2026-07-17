@@ -28,7 +28,12 @@ from src.config import detect_local_timezone, load_config  # noqa: E402
 from src.read import get_completions, get_wake_ups, get_weights  # noqa: E402
 from src.timezones import resolve_timezone  # noqa: E402
 
-st.set_page_config(page_title="cal-task-sync", page_icon="✅", layout="wide")
+_FAVICON = Path(__file__).resolve().parent / "static" / "favicon.png"
+st.set_page_config(
+    page_title="Daily Tracker",
+    page_icon=str(_FAVICON),
+    layout="wide",
+)
 
 # --- Timezone resolution (auto-detect, else prompt) ---
 _detected_tz = detect_local_timezone()
