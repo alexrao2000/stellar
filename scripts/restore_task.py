@@ -30,6 +30,7 @@ import re
 import sys
 
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from src.config import TASKS_RW_SCOPES, load_config
 from src.google_auth import get_credentials
@@ -48,24 +49,19 @@ def _service(config):
 
 
 def _find(service, task_id: str) -> tuple[str, dict]:
-    """Locate a task by id across all lists, including deleted ones."""
+    """Locate a task by id across all lists, including deleted and unindexed ones.
+
+    Uses get() per list rather than scanning list(). A just-un-deleted task can
+    be missing from list() results for a while -- Google's list index lags
+    behind the record -- while get() returns it immediately. Scanning would make
+    this tool unable to see the very tasks it is meant to repair.
+    """
     for tl in service.tasklists().list(maxResults=100).execute().get("items", []):
-        page_token = None
-        while True:
-            resp = (
-                service.tasks()
-                .list(
-                    tasklist=tl["id"], showCompleted=True, showHidden=True,
-                    showDeleted=True, maxResults=100, pageToken=page_token,
-                )
-                .execute()
-            )
-            for t in resp.get("items", []):
-                if t["id"] == task_id:
-                    return tl["id"], t
-            page_token = resp.get("nextPageToken")
-            if not page_token:
-                break
+        try:
+            return tl["id"], service.tasks().get(tasklist=tl["id"], task=task_id).execute()
+        except HttpError as exc:
+            if exc.resp.status not in (400, 404):
+                raise
     raise SystemExit(f"Task {task_id!r} not found in any list.")
 
 
