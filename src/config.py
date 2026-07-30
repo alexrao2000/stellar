@@ -17,6 +17,11 @@ CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 # Full set of scopes requested during OAuth consent.
 SCOPES = TASKS_SCOPES + CALENDAR_SCOPES
 
+# Read-write Tasks access, used *only* by the one-off repair tooling in
+# scripts/. Deliberately kept out of SCOPES so the sync -- and the token shipped
+# to CI -- stay read-only. Consent for these lands in a separate token file.
+TASKS_RW_SCOPES = ["https://www.googleapis.com/auth/tasks"]
+
 
 def _resolve(path_value: str) -> str:
     """Resolve a possibly-relative path against the project root."""
@@ -26,6 +31,16 @@ def _resolve(path_value: str) -> str:
 
 def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _split_aliases(value: str) -> dict[str, str]:
+    """Parse TITLE_ALIASES='Old Title=Canonical Title;Another=Canonical'."""
+    aliases: dict[str, str] = {}
+    for pair in value.split(";"):
+        variant, sep, canonical = pair.partition("=")
+        if sep and variant.strip() and canonical.strip():
+            aliases[variant.strip()] = canonical.strip()
+    return aliases
 
 
 def detect_local_timezone() -> str | None:
@@ -61,6 +76,11 @@ class Config:
     google_token_file: str = field(
         default_factory=lambda: _resolve(os.getenv("GOOGLE_TOKEN_FILE", "token.json"))
     )
+    # Separate cache for the write-scoped consent used by scripts/restore_task.py,
+    # so the read-only token used by the sync is never upgraded in place.
+    google_token_rw_file: str = field(
+        default_factory=lambda: _resolve(os.getenv("GOOGLE_TOKEN_RW_FILE", "token_rw.json"))
+    )
     # For headless/CI runs, credentials and the cached token can be provided inline
     # as JSON via env vars (GitHub secrets) instead of files on disk.
     google_credentials_json: str = field(default_factory=lambda: os.getenv("GOOGLE_CREDENTIALS_JSON", ""))
@@ -76,6 +96,16 @@ class Config:
 
     wake_up_task_title: str = field(default_factory=lambda: os.getenv("WAKE_UP_TASK_TITLE", "Wake Up"))
     weight_task_title: str = field(default_factory=lambda: os.getenv("WEIGHT_TASK_TITLE", "Weigh yourself"))
+
+    # Fold hand-recreated task instances back into their parent recurring task.
+    # Explicit pins always win over the inferred gap-filling matches; set
+    # TITLE_FOLD_THRESHOLD=1 to disable inference and rely on pins alone.
+    title_aliases: dict[str, str] = field(
+        default_factory=lambda: _split_aliases(os.getenv("TITLE_ALIASES", ""))
+    )
+    title_fold_threshold: float = field(
+        default_factory=lambda: float(os.getenv("TITLE_FOLD_THRESHOLD", "0.86"))
+    )
 
     # Calendar API does not expose Google Tasks (only real events), so it's off by
     # default. Enable only if you also want to ingest calendar events.

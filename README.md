@@ -164,15 +164,55 @@ make reauth                        # Force Google re-consent, then sync
 make import-takeout FILE=take.zip  # Backfill full history from a Takeout export
 make migrate-supabase              # Copy local SQLite data into Supabase
 make keepalive                     # Ping Supabase so the free project stays active
+make restore-task ARGS="..."       # Un-delete / re-date a Google Task in place
 make dashboard                     # Launch Streamlit charts
 make install-scheduler             # Install local launchd job (optional)
 make help                          # List targets
 ```
 
+## Recovering a deleted task
+
+Google **soft**-deletes tasks: `tasks.delete` flips a `deleted` flag and the record keeps
+its id, title, notes and due date. The sync passes `showDeleted=False` so those never reach
+the database, but they are still there and can be restored *in place* rather than recreated:
+
+```bash
+# Dry run first -- prints before/after, writes nothing
+make restore-task ARGS="--task-id TASK_ID --undelete --due 2026-07-29"
+# Commit it
+make restore-task ARGS="--task-id TASK_ID --undelete --due 2026-07-29 --apply"
+```
+
+This needs read-write Tasks scope, which the sync deliberately does not have. The first run
+opens a browser consent flow and caches the write token separately in `token_rw.json`
+(gitignored), so the read-only token used by the sync and CI is never upgraded in place.
+
+Note that the Tasks API exposes **no recurrence data at all** — no series id, no parent
+pointer. Occurrences of a recurring task are related only by sharing a title, and this
+project buckets them by title plus due date. So restoring in place isn't needed to keep an
+occurrence "in the series"; it matters because it preserves the original id and notes.
+
 ## Notes / customization
 
 - The metric tasks are matched by title via `WAKE_UP_TASK_TITLE` and `WEIGHT_TASK_TITLE` in `.env`.
+  Matching tolerates case, stray whitespace, and emoji, so a hand-recreated instance still
+  produces a datapoint.
+- **Replacement instances are folded into their parent daily task.** If you delete one day's
+  instance of a daily task and recreate it by hand, the new task gets a slightly different
+  title, which would otherwise show up as a gap in that task's streak *plus* a sparse one-off
+  in the consistency ranking. A candidate is folded only when it is similarly titled, sparse,
+  and lands exclusively on days the parent series is missing — so genuinely separate tasks
+  that run alongside each other (e.g. `Brush Teeth` and `Brush Teeth (Twice)`) are never
+  merged. Tune with `TITLE_FOLD_THRESHOLD`, or pin/override specific pairs with
+  `TITLE_ALIASES`. Folds are listed in the Consistency tab and never rewrite stored rows.
 - Limit which lists are synced with `TASK_LISTS=Daily,Health` (empty = all lists).
+- **Missed days are recorded, not just completions.** The Tasks API needs two passes per
+  list: `completedMin` is what makes it return completed tasks from further back than the
+  recent handful, but it also filters out every incomplete task, so one call can return deep
+  history or current work but never both. Results are merged on task id.
+- Undated incomplete tasks (backlog items like "Clean Car") get no day bucket and are left
+  out of the stats — they were never scheduled, so counting them as missed would be wrong.
+  An incomplete task dated in the future is likewise not yet a miss.
 - Timezone for day-bucketing is resolved in this order: `LOCAL_TIMEZONE` override →
   your **Google Calendar timezone setting** → machine-detected → UTC. The Calendar
   setting is authoritative and keeps bucketing correct even on UTC CI runners.

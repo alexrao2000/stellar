@@ -41,8 +41,13 @@ def _iter_task_lists(service, wanted_names: list[str]) -> Iterator[dict]:
             break
 
 
-def _iter_tasks(service, list_id: str) -> Iterator[dict]:
-    """List tasks including completed ones as far back as Google still retains them."""
+# Floor for how far back to ask for completed tasks. Without a completedMin,
+# Google returns only a recent handful of completions.
+_COMPLETED_MIN = "2018-01-01T00:00:00.000Z"
+
+
+def _page_tasks(service, list_id: str, **extra) -> Iterator[dict]:
+    """Yield every task page for a list, following nextPageToken."""
     page_token = None
     while True:
         resp = (
@@ -53,9 +58,8 @@ def _iter_tasks(service, list_id: str) -> Iterator[dict]:
                 showHidden=True,
                 showDeleted=False,
                 maxResults=100,
-                # Without this, Google often returns only recent completions.
-                completedMin="2018-01-01T00:00:00.000Z",
                 pageToken=page_token,
+                **extra,
             )
             .execute()
         )
@@ -63,6 +67,24 @@ def _iter_tasks(service, list_id: str) -> Iterator[dict]:
         page_token = resp.get("nextPageToken")
         if not page_token:
             break
+
+
+def _iter_tasks(service, list_id: str) -> Iterator[dict]:
+    """List every task in a list: completed history *and* current incomplete ones.
+
+    This needs two passes. `completedMin` is what makes Google return completed
+    tasks from further back than the recent handful, but it also filters out
+    every needsAction task -- so a single call can have deep history or current
+    work, never both. Asking for only the first silently drops every missed day,
+    which inflates completion rates to 100%.
+
+    Results are merged on task id; the second pass wins, being the fresher read.
+    """
+    merged: dict[str, dict] = {}
+    for extra in ({"completedMin": _COMPLETED_MIN}, {}):
+        for task in _page_tasks(service, list_id, **extra):
+            merged[task["id"]] = task
+    return iter(merged.values())
 
 
 def fetch_tasks(config: Config) -> list[TaskRecord]:

@@ -27,3 +27,6 @@ logs/
 
 # Takeout extraction temp
 .takeout_tmp/
+
+# Write-scoped token for one-off repair tooling (scripts/restore_task.py)
+token_rw.json
