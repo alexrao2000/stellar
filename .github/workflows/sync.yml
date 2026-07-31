@@ -1,12 +1,17 @@
 name: Daily task sync
 
 on:
-  schedule:
-    # Times are UTC. Pacific is UTC-7 (PDT) / UTC-8 (PST), so these land near
-    # 2am and 2pm Pacific during PDT and shift ~1h during PST.
-    - cron: "0 9 * * *"   # ~02:00 PT
-    - cron: "0 21 * * *"  # ~14:00 PT
-  workflow_dispatch: {}    # allow manual runs from the Actions tab
+  # NOTE (2026-07-30): scheduled sync DISABLED pending data reconciliation.
+  # The unattended job was writing incomplete/stale data — it only ever fetched
+  # completed tasks (completedMin dropped needsAction), and the DB's completion
+  # state diverged from Google. Do not re-enable until the fix branch
+  # (fix/sync-missed-days-and-instance-folding) is merged AND the Google/Supabase
+  # data is reconciled. To re-enable, uncomment the schedule block below.
+  # schedule:
+  #   # Times are UTC. Pacific is UTC-7 (PDT) / UTC-8 (PST).
+  #   - cron: "0 9 * * *"   # ~02:00 PT
+  #   - cron: "0 21 * * *"  # ~14:00 PT
+  workflow_dispatch: {}    # manual runs from the Actions tab still allowed
 
 concurrency:
   group: task-sync
