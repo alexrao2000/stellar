@@ -243,7 +243,10 @@ footer.foot b { color: var(--ink); font-weight: 600; }
     var d = new Date(t);
     return MO[d.getUTCMonth()] + " '" + String(d.getUTCFullYear()).slice(2);
   }
-  function signed(v) { return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1); }
+  /* Non-ASCII is written as \u escapes throughout: the page carries no charset
+     declaration of its own, so a raw UTF-8 glyph here renders as mojibake
+     wherever the host serves text/html without charset=utf-8. */
+  function signed(v) { return (v > 0 ? '+' : v < 0 ? '\u2212' : '') + Math.abs(v).toFixed(1); }
   function setDelta(el, v, suffix) {
     el.textContent = signed(v) + (suffix || '');
     el.classList.toggle('down', v < 0);
@@ -284,9 +287,9 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   document.getElementById('s-high-d').textContent = fmtDate(highest.t);
   document.getElementById('s-avg').textContent = avg.toFixed(1);
   document.getElementById('s-n').textContent = ALL.length;
-  document.getElementById('s-span').textContent = fmtShort(first.t) + ' – ' + fmtShort(last.t);
+  document.getElementById('s-span').textContent = fmtShort(first.t) + ' \u2013 ' + fmtShort(last.t);
   document.getElementById('f-count').textContent = ALL.length;
-  document.getElementById('f-range').textContent = first.d + ' → ' + last.d;
+  document.getElementById('f-range').textContent = first.d + ' \u2192 ' + last.d;
 
   /* ---- Chart ---- */
   var cv = document.getElementById('chart');
@@ -451,6 +454,19 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   });
 
   window.addEventListener('resize', draw);
+
+  /* draw() no-ops while the canvas has zero size. In an embedded frame the
+     element can get its real size after load, and that resizes no window --
+     so without this the chart would stay permanently blank. */
+  if (window.ResizeObserver) {
+    new ResizeObserver(function () { draw(); }).observe(cv);
+  } else {
+    var tries = 0;
+    var poll = setInterval(function () {
+      if (cv.clientWidth && cv.clientHeight) { draw(); clearInterval(poll); }
+      if (++tries > 40) clearInterval(poll);
+    }, 100);
+  }
   if (window.matchMedia) {
     var mq = window.matchMedia('(prefers-color-scheme: dark)');
     (mq.addEventListener ? mq.addEventListener.bind(mq, 'change') : mq.addListener.bind(mq))(draw);
