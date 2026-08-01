@@ -57,20 +57,11 @@ def _day_of(task: dict, tz: ZoneInfo) -> str | None:
     return _to_local_date(task.get("completed"), tz) or _to_local_date(task.get("created"), tz)
 
 
-def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Extract per-day completion status from Takeout.")
-    p.add_argument("path", help="Takeout .zip or Tasks.json")
-    p.add_argument("--list", default="Daily", help="Task list to extract (default: Daily).")
-    p.add_argument("--out", help="Write JSON here instead of stdout.")
-    args = p.parse_args(argv)
-
-    config = load_config()
-    tz = ZoneInfo(resolve_timezone(config, allow_google=False))
-
-    data = _load_tasks_json(Path(args.path).expanduser())
+def extract_status_records(data: dict, list_name: str, tz: ZoneInfo) -> list[dict]:
+    """Pull {day, title, status, is_completed, recurrence_id} for one task list."""
     records = []
     for task_list in data.get("items", []):
-        if task_list.get("title") != args.list:
+        if task_list.get("title") != list_name:
             continue
         for task in task_list.get("items", []):
             day = _day_of(task, tz)
@@ -85,8 +76,22 @@ def main(argv: list[str] | None = None) -> int:
                     "recurrence_id": task.get("task_recurrence_id"),
                 }
             )
-
     records.sort(key=lambda r: (r["day"], r["title"]))
+    return records
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description="Extract per-day completion status from Takeout.")
+    p.add_argument("path", help="Takeout .zip or Tasks.json")
+    p.add_argument("--list", default="Daily", help="Task list to extract (default: Daily).")
+    p.add_argument("--out", help="Write JSON here instead of stdout.")
+    args = p.parse_args(argv)
+
+    config = load_config()
+    tz = ZoneInfo(resolve_timezone(config, allow_google=False))
+
+    data = _load_tasks_json(Path(args.path).expanduser())
+    records = extract_status_records(data, args.list, tz)
     payload = json.dumps(records, indent=2)
     if args.out:
         Path(args.out).write_text(payload, encoding="utf-8")
