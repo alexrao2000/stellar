@@ -220,17 +220,96 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   </footer>
 </div>
 
-<script id="data" type="application/json">__DATA__</script>
+<script id="bootstrap" type="application/json">__BOOTSTRAP__</script>
 <script>
 (function () {
-  var D = JSON.parse(document.getElementById('data').textContent);
-  var TITLES = D.titles, NOTES = D.notes, LISTS = D.lists, ROWS = D.rows;
+  var BOOT = JSON.parse(document.getElementById('bootstrap').textContent);
+  var TITLES, NOTES, LISTS, ROWS;
+
+  /* Interning happens at build time for an inlined snapshot; in live mode the
+     rows arrive raw from PostgREST, so the same pools get built here. Keeping
+     one shape means the rendering below is identical either way. */
+  function intern(pool, index, value) {
+    var k = value === null || value === undefined ? '' : String(value);
+    if (!(k in index)) { index[k] = pool.length; pool.push(k); }
+    return index[k];
+  }
+
+  var WSRC_CODE = {
+    'supabase': 1, 'not recorded': 2, 'inductive': 3, 'reported': 4
+  };
+
+  function shapeRows(records) {
+    var titles = [], notes = [], lists = [];
+    var ti = {}, ni = {}, li = {};
+    var rows = records.map(function (r) {
+      return [
+        String(r.day).slice(0, 10),
+        intern(titles, ti, r.title),
+        intern(lists, li, r.list_title),
+        r.is_completed ? 1 : 0,
+        r.notes === null || r.notes === undefined ? null : intern(notes, ni, r.notes),
+        r.completed_at || null,
+        r.weight_lbs === null || r.weight_lbs === undefined ? null : Number(r.weight_lbs),
+        WSRC_CODE[r.weight_source] || 0,
+        r.takeout_weight === null || r.takeout_weight === undefined
+          ? null : Number(r.takeout_weight),
+      ];
+    });
+    rows.sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1]; });
+    return { titles: titles, notes: notes, lists: lists, rows: rows };
+  }
+
+  var PAGE = 1000; /* PostgREST caps a response at 1000 rows; page or lose the tail. */
+
+  function fetchAll() {
+    var out = [];
+    function next(from) {
+      var url = BOOT.url + '/rest/v1/task_history'
+        + '?select=day,list_title,title,is_completed,completed_at,notes,'
+        + 'weight_lbs,weight_source,takeout_weight'
+        + '&order=day.asc,title.asc';
+      return fetch(url, {
+        headers: {
+          apikey: BOOT.key,
+          Authorization: 'Bearer ' + BOOT.key,
+          Range: from + '-' + (from + PAGE - 1),
+          'Range-Unit': 'items',
+        },
+      }).then(function (res) {
+        if (!res.ok) {
+          return res.text().then(function (body) {
+            throw new Error('HTTP ' + res.status + ' - ' + body.slice(0, 300));
+          });
+        }
+        return res.json();
+      }).then(function (batch) {
+        out = out.concat(batch);
+        return batch.length < PAGE ? out : next(from + PAGE);
+      });
+    }
+    return next(0);
+  }
+
+  function fail(msg) {
+    document.getElementById('board').innerHTML =
+      '<div class="empty-note"><b>Could not load from Supabase.</b><br>' +
+      esc(msg) + '<br><br>Most likely the anon key is stale, or task_history ' +
+      'has no read policy for anon (RLS with no policy returns zero rows).</div>';
+  }
+
+  function boot(shaped) {
+    TITLES = shaped.titles; NOTES = shaped.notes;
+    LISTS = shaped.lists; ROWS = shaped.rows;
+    start();
+  }
   var WSRC = ['', 'supabase', 'not recorded', 'inductive', 'reported'];
   var DAY = 86400000;
   var WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   var MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
   // rows: [day, titleIdx, listIdx, done, notesIdx, completedAt, weight, wsrc, takeoutWeight]
+  function start() {
   var byDay = new Map();
   ROWS.forEach(function (r, i) {
     if (!byDay.has(r[0])) byDay.set(r[0], []);
@@ -436,5 +515,21 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   var j = document.getElementById('jump');
   j.min = minDay; j.max = maxDay;
   render();
+  }
+
+  /* Inline: the snapshot is already interned and embedded. Live: fetch the rows
+     from Supabase and intern them here, so both paths reach start() identically. */
+  if (BOOT.mode === 'live') {
+    document.getElementById('board').innerHTML =
+      '<div class="empty-note">Loading from Supabase...</div>';
+    fetchAll()
+      .then(function (records) {
+        if (!records.length) { fail('task_history returned no rows.'); return; }
+        boot(shapeRows(records));
+      })
+      .catch(function (err) { fail(err && err.message ? err.message : String(err)); });
+  } else {
+    boot(BOOT.data);
+  }
 })();
 </script>

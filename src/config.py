@@ -92,6 +92,10 @@ class Config:
     storage_backend: str = field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "supabase").lower())
     supabase_url: str = field(default_factory=lambda: os.getenv("SUPABASE_URL", ""))
     supabase_key: str = field(default_factory=lambda: os.getenv("SUPABASE_SERVICE_ROLE_KEY", ""))
+    # Anon / publishable key. Safe to embed in a page that ships to the browser,
+    # because it is governed by RLS -- unlike supabase_key above, which bypasses
+    # it. Kept as a separate setting so the two can never be confused.
+    supabase_anon_key: str = field(default_factory=lambda: os.getenv("SUPABASE_ANON_KEY", ""))
     sqlite_path: str = field(default_factory=lambda: _resolve(os.getenv("SQLITE_PATH", "cal_task_sync.sqlite")))
 
     wake_up_task_title: str = field(default_factory=lambda: os.getenv("WAKE_UP_TASK_TITLE", "Wake Up"))
