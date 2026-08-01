@@ -20,6 +20,7 @@ import pandas as pd
 
 from src.config import load_config
 from src.read import read_table
+from src.timezones import local_midnight_utc, resolve_timezone
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     config = load_config()
+    tz_name = resolve_timezone(config, allow_google=False)
     df = read_table(config, "task_completions")
     if df.empty:
         print("task_completions is EMPTY -- nothing to export.", file=sys.stderr)
@@ -52,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
         done = bool(r.get("is_completed"))
         rec = {
             "title": r.get("title") or "",
-            "due": f"{r['day'].isoformat()}T00:00:00.000Z",
+            "due": local_midnight_utc(r["day"].isoformat(), tz_name),
             "status": "completed" if done else "needsAction",
         }
         if r.get("notes") is not None and not pd.isna(r.get("notes")):

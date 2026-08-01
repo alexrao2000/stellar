@@ -34,6 +34,7 @@ from googleapiclient.errors import HttpError
 
 from src.config import TASKS_RW_SCOPES, load_config
 from src.google_auth import get_credentials
+from src.timezones import local_midnight_utc, resolve_timezone
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("cal-task-sync")
@@ -91,8 +92,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.undelete:
         body["deleted"] = False
     if args.due:
-        # Google stores due as UTC midnight of the intended local date.
-        body["due"] = f"{args.due}T00:00:00.000Z"
+        # Local midnight expressed in UTC, matching how Google itself stores a
+        # due date (07:00:00Z for a Pacific day). A literal 00:00:00Z would put
+        # the task on the previous local evening and bucket it a day early.
+        body["due"] = local_midnight_utc(args.due, resolve_timezone(config, allow_google=False))
     if args.notes:
         body["notes"] = args.notes
 

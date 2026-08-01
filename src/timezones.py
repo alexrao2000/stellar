@@ -13,10 +13,24 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from .config import Config, detect_local_timezone
 
 log = logging.getLogger("cal-task-sync")
+
+
+def local_midnight_utc(day: str, tz_name: str) -> str:
+    """RFC3339 UTC timestamp for local midnight on `day` (YYYY-MM-DD).
+
+    Google Tasks encodes a due date as local midnight expressed in UTC -- so a
+    Pacific date is stored as 07:00:00Z, not 00:00:00Z. Writing a literal
+    00:00:00Z puts the task at 5pm the *previous* local day, and any bucketing
+    that converts to a local calendar day then files it a day early.
+    """
+    local = datetime.fromisoformat(day).replace(tzinfo=ZoneInfo(tz_name))
+    return local.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def resolve_timezone(config: Config, allow_google: bool = True) -> str:

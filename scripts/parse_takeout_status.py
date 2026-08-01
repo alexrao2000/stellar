@@ -51,6 +51,13 @@ def _day_of(task: dict, tz: ZoneInfo) -> str | None:
     if start is None and scheduled:
         start = scheduled[0].get("start")
     if start:
+        # Google encodes a due date as local midnight in UTC (07:00:00Z for a
+        # Pacific day), so an exact 00:00:00Z is not a real instant -- it is a
+        # date-only value written through the API. Converting it to a local day
+        # would shift it back one day west of UTC; take its date verbatim. Where
+        # local midnight really is 00:00Z this is identical anyway.
+        if start.endswith("T00:00:00Z") or start.endswith("T00:00:00.000Z"):
+            return start[:10]
         day = _to_local_date(start, tz)
         if day:
             return day
