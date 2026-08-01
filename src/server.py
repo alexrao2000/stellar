@@ -179,9 +179,12 @@ def _check_day(day: str) -> str:
 # recovery to get right and nothing in a daily check-in has any business
 # touching it, so writes to earlier days are refused outright.
 #
+# 2026-07-31 rather than 08-01: the app went live on the 31st Pacific, so that
+# day is one the user records normally rather than part of the frozen history.
+#
 # Temporary by intent -- lift it deliberately when back-editing is wanted, not
 # by accident. Reads are unaffected; the calendar still shows all of history.
-WRITE_FLOOR = date(2026, 8, 1)
+WRITE_FLOOR = date(2026, 7, 31)
 
 
 def _check_writable(day: str) -> str:
