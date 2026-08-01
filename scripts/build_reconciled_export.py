@@ -24,7 +24,7 @@ Read-only. Writes a JSON file; touches neither Supabase nor Google.
 
 Run:
     python -m scripts.build_reconciled_export \
-        data/takeout/tasks-takeout-2026-07-31.zip --out reconciled_export.json
+        data/takeout/tasks-takeout-2026-07-31.zip --out source_of_truth.json
 """
 from __future__ import annotations
 

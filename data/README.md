@@ -31,8 +31,8 @@ stale when the source does — rebuild rather than edit them.
 
 ```bash
 python -m scripts.build_reconciled_export data/takeout/tasks-takeout-2026-07-31.zip \
-    --out data/reconciled_export.json
-python -m scripts.build_calendar_page data/reconciled_export.json --out data/pages/calendar.html
+    --out data/source_of_truth.json
+python -m scripts.build_calendar_page data/source_of_truth.json --out data/pages/calendar.html
 python -m scripts.build_weight_page --out data/pages/weight_log.html
 ```
 

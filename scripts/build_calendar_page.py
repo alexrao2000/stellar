@@ -14,7 +14,7 @@ multiply the payload several times over for no benefit.
 Read-only. Reads a file, writes a file; touches neither Supabase nor Google.
 
 Run:
-    python -m scripts.build_calendar_page reconciled_export.json --out calendar.html
+    python -m scripts.build_calendar_page source_of_truth.json --out calendar.html
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def build_payload(records: list[dict]) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Render the reconciled export as a calendar page.")
-    p.add_argument("source", help="reconciled_export.json")
+    p.add_argument("source", help="source_of_truth.json")
     p.add_argument("--out", default="calendar.html", help="Output path.")
     args = p.parse_args(argv)
 
