@@ -91,7 +91,16 @@ class Config:
 
     storage_backend: str = field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "supabase").lower())
     supabase_url: str = field(default_factory=lambda: os.getenv("SUPABASE_URL", ""))
-    supabase_key: str = field(default_factory=lambda: os.getenv("SUPABASE_SERVICE_ROLE_KEY", ""))
+    # The privileged key. Supabase's newer format is `sb_secret_...` under
+    # SUPABASE_SECRET_KEY; the legacy JWT `service_role` key lived under
+    # SUPABASE_SERVICE_ROLE_KEY. Prefer the new name, fall back to the old one so
+    # existing CI secrets keep working until they are switched over.
+    supabase_key: str = field(
+        default_factory=lambda: (
+            os.getenv("SUPABASE_SECRET_KEY", "")
+            or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+        )
+    )
     # Anon / publishable key. Safe to embed in a page that ships to the browser,
     # because it is governed by RLS -- unlike supabase_key above, which bypasses
     # it. Kept as a separate setting so the two can never be confused.
