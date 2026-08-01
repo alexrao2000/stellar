@@ -49,9 +49,83 @@ create table if not exists public.weight_log (
     synced_at        timestamptz default now()
 );
 
+-- The reconciled record: Google Takeout for every task and its completion
+-- status, Supabase weight_log for weight values. Built by
+-- scripts/build_reconciled_export.py and loaded by scripts/load_task_history.py.
+--
+-- Deliberately a separate table from task_completions. That table is the raw
+-- sync output and remains the historical snapshot the reconciliation was built
+-- from; nothing should overwrite it. This one is the merged result, and is
+-- intended to become the primary table if task tracking moves off Google.
+create table if not exists public.task_history (
+    id             bigserial primary key,
+    day            date not null,
+    list_title     text not null,
+    title          text not null,
+    status         text,
+    is_completed   boolean,
+    completed_at   timestamptz,
+    notes          text,
+    recurrence_id  text,
+    weight_lbs     numeric,
+    weight_source  text,
+    takeout_weight numeric,
+    imported_at    timestamptz default now(),
+    -- The natural key the reconciled export already dedupes on, so loading is
+    -- idempotent: a re-run updates in place instead of duplicating.
+    unique (day, list_title, title)
+);
+
+create index if not exists idx_task_history_day on public.task_history(day);
+create index if not exists idx_task_history_title on public.task_history(title);
+
+-- Which habits recur daily. Google's recurrence engine is not reachable through
+-- its API and is being migrated away from, so the app materialises each day's
+-- occurrences itself from this table.
+create table if not exists public.recurring_tasks (
+    id         bigserial primary key,
+    list_title text not null default 'Daily',
+    title      text not null,
+    active     boolean not null default true,
+    sort_order integer not null default 0,
+    starts_on  date,          -- null = no start bound
+    ends_on    date,          -- null = ongoing
+    created_at timestamptz default now(),
+    unique (list_title, title)
+);
+
+alter table public.recurring_tasks enable row level security;
+
+-- The eight dailies, seeded from what task_history shows running every day of
+-- July 2026. Alphabetical, matching how the calendar orders them.
+insert into public.recurring_tasks (list_title, title, sort_order, starts_on) values
+    ('Daily', 'Brush Teeth',         1, '2026-08-01'),
+    ('Daily', 'Brush Teeth (Twice)', 2, '2026-08-01'),
+    ('Daily', 'Floss',               3, '2026-08-01'),
+    ('Daily', 'Moisturize',          4, '2026-08-01'),
+    ('Daily', 'Run',                 5, '2026-08-01'),
+    ('Daily', 'Supplements',         6, '2026-08-01'),
+    ('Daily', 'Wake Up',             7, '2026-08-01'),
+    ('Daily', 'Weigh yourself',      8, '2026-08-01')
+on conflict (list_title, title) do nothing;
+
 -- Lock down PostgREST for anon/authenticated. The sync and keepalive jobs use
 -- the service_role key, which bypasses RLS.
 alter table public.task_completions enable row level security;
 alter table public.wake_up_log enable row level security;
 alter table public.weight_log enable row level security;
 alter table public.heartbeat enable row level security;
+alter table public.task_history enable row level security;
+
+-- The live calendar page reads task_history directly from the browser with the
+-- anon (publishable) key, so it needs an explicit read policy: RLS with no
+-- policy returns zero rows to anything but service_role.
+--
+-- Read only, and scoped to this one table. The anon key is embedded in the page
+-- and must therefore never be able to write, nor to reach task_completions,
+-- weight_log or wake_up_log.
+drop policy if exists "anon reads task_history" on public.task_history;
+create policy "anon reads task_history"
+    on public.task_history for select to anon using (true);
+
+revoke insert, update, delete, truncate on public.task_history from anon, authenticated;

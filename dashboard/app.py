@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import detect_local_timezone, load_config  # noqa: E402
 from src.read import get_completions, get_wake_ups, get_weights  # noqa: E402
 from src.timezones import resolve_timezone  # noqa: E402
+from src.titles import canonicalize, infer_aliases  # noqa: E402
 
 _FAVICON = Path(__file__).resolve().parent / "static" / "favicon.png"
 st.set_page_config(
@@ -283,11 +284,31 @@ if not weight.empty:
     weight["day"] = pd.to_datetime(weight["day"]).dt.normalize()
 
 # Prepare deduped task rows once (used by Consistency and Data tabs).
+# Titles are canonicalized first, so an instance that was deleted and
+# hand-recreated folds back into its parent daily task instead of showing up as
+# a gap in that task plus a stray one-off. Raw titles are preserved for the Data
+# tab; nothing is rewritten in storage.
 deduped = pd.DataFrame()
+folds: list = []
 if not completions.empty:
     deduped = completions.dropna(subset=["day"]).copy()
     deduped["is_completed"] = deduped["is_completed"].astype(bool)
     deduped["day_only"] = deduped["day"].dt.date
+
+    # An incomplete task dated in the future isn't a missed day, it just hasn't
+    # come due yet. Counting it would depress the completion rate and break the
+    # current streak. Future days that were somehow completed early still count.
+    _today = pd.Timestamp.now(tz=_active_tz).date()
+    deduped = deduped[deduped["is_completed"] | (deduped["day_only"] <= _today)]
+
+    alias_map, folds = infer_aliases(
+        zip(deduped["title"], deduped["day_only"]),
+        explicit=config.title_aliases,
+        threshold=config.title_fold_threshold,
+    )
+    deduped["raw_title"] = deduped["title"]
+    deduped["title"] = deduped["raw_title"].map(lambda t: canonicalize(t, alias_map))
+
     deduped = (
         deduped.sort_values("is_completed")
         .drop_duplicates(subset=["day_only", "title"], keep="last")
@@ -373,6 +394,16 @@ with tab_consistency:
         st.subheader("Task consistency")
         st.caption("How reliably each task got done — and when it slipped.")
 
+        if folds:
+            with st.expander(f"{len(folds)} replacement instance(s) folded into their daily task"):
+                st.caption(
+                    "A task instance deleted and hand-recreated gets a slightly different "
+                    "title. These were merged into the parent series so streaks stay intact. "
+                    "Pin or undo any of them with TITLE_ALIASES in .env."
+                )
+                for f in sorted(folds, key=lambda f: f.canonical):
+                    st.markdown(f"- {f.describe()}")
+
         min_occ = st.slider(
             "Only include tasks with at least this many scheduled days",
             min_value=1, max_value=60, value=10, key="min_occ",
@@ -433,7 +464,12 @@ with tab_data:
         st.info("No task data yet. Run the sync first.")
     else:
         table = deduped.sort_values(["day_only", "title"], ascending=[False, True])
-        table = table[["day_only", "title", "is_completed", "status", "notes", "source"]]
+        # Show the original title alongside the canonical one, but only where a
+        # fold actually changed it, so the column stays quiet in the normal case.
+        table = table.assign(
+            raw_title=table["raw_title"].where(table["raw_title"] != table["title"], "")
+        )
+        table = table[["day_only", "title", "raw_title", "is_completed", "status", "notes", "source"]]
 
         ctrl_l, ctrl_r = st.columns([1, 1])
         with ctrl_l:
@@ -458,6 +494,7 @@ with tab_data:
             column_config={
                 "day_only": "Date",
                 "title": "Task",
+                "raw_title": "Original title",
                 "is_completed": "Done",
                 "status": "Status",
                 "notes": "Notes",

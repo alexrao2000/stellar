@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from .tasks_client import TaskRecord
+from .titles import matches_metric_title
 
 if TYPE_CHECKING:
     from .calendar_client import CalendarEventRecord
@@ -79,17 +80,25 @@ def _to_local_date(ts: str | None, tz: ZoneInfo) -> str | None:
 
 
 def bucket_day(task: TaskRecord, tz: ZoneInfo) -> str | None:
-    """Assign a task to a calendar day.
+    """Assign a task to a calendar day, or None when it has no meaningful one.
 
     Prefer the `due` date (a daily task's intended day), so a task finished after
-    midnight still counts for the day it was due. Fall back to completed, then updated.
+    midnight still counts for the day it was due. A completed task with no due
+    date still has a real day: when it was done.
+
+    An *incomplete* task with no due date is an undated backlog item ("Clean
+    Car"), not something scheduled. Bucketing it to `updated` would invent a
+    missed day it was never due on, so it gets no day and is filtered out
+    downstream.
     """
     # `due` is RFC3339 but only the date part is meaningful in Google Tasks.
     if task.due:
         date_part = task.due[:10]
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_part):
             return date_part
-    return _to_local_date(task.completed, tz) or _to_local_date(task.updated, tz)
+    if task.completed:
+        return _to_local_date(task.completed, tz) or _to_local_date(task.updated, tz)
+    return None
 
 
 def to_completion_row(task: TaskRecord, tz: ZoneInfo) -> CompletionRow:
@@ -181,16 +190,21 @@ def metrics_from(
     source_id: str,
     wake_title: str,
     weight_title: str,
+    aliases: dict[str, str] | None = None,
 ) -> tuple[WakeUpRow | None, WeightRow | None]:
-    """Produce metric rows from any titled, dated, note-bearing item."""
+    """Produce metric rows from any titled, dated, note-bearing item.
+
+    Title matching is tolerant of the whitespace/case/emoji drift a
+    hand-recreated instance picks up, so a replacement weigh-in still yields a
+    datapoint instead of silently dropping out of the series.
+    """
     if not day or not notes:
         return None, None
 
     wake_row: WakeUpRow | None = None
     weight_row: WeightRow | None = None
-    norm_title = title.strip().lower()
 
-    if norm_title == wake_title.strip().lower():
+    if matches_metric_title(title, wake_title, aliases):
         parsed = parse_wake_up(notes)
         if parsed:
             wake_row = WakeUpRow(
@@ -201,7 +215,7 @@ def metrics_from(
                 source_task_id=source_id,
             )
 
-    if norm_title == weight_title.strip().lower():
+    if matches_metric_title(title, weight_title, aliases):
         parsed_w = parse_weight(notes)
         if parsed_w:
             weight_row = WeightRow(

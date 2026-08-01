@@ -1,0 +1,543 @@
+<title>Task Calendar</title>
+<style>
+:root {
+  --bg: #EFEEF4;
+  --surface: #FCFBFE;
+  --surface-2: #F4F2F9;
+  --ink: #191627;
+  --ink-muted: #6A6480;
+  --rule: #DCD8E6;
+  --done-bg: #EDEAF4;
+  --done-ink: #8B84A6;
+  --todo-bg: #6D4AC4;
+  --todo-ink: #FFFFFF;
+  --today: #C2410C;
+  --shadow: 0 1px 2px rgba(25,22,39,0.06), 0 2px 8px rgba(25,22,39,0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131019; --surface: #1B1826; --surface-2: #232032;
+    --ink: #EBE8F5; --ink-muted: #948DAD; --rule: #2E2A3D;
+    --done-bg: #221E30; --done-ink: #7B7496;
+    --todo-bg: #8B63E8; --todo-ink: #120E1C;
+    --today: #F0834E;
+    --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 2px 10px rgba(0,0,0,0.3);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131019; --surface: #1B1826; --surface-2: #232032;
+  --ink: #EBE8F5; --ink-muted: #948DAD; --rule: #2E2A3D;
+  --done-bg: #221E30; --done-ink: #7B7496;
+  --todo-bg: #8B63E8; --todo-ink: #120E1C;
+  --today: #F0834E;
+  --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 2px 10px rgba(0,0,0,0.3);
+}
+:root[data-theme="light"] {
+  --bg: #EFEEF4; --surface: #FCFBFE; --surface-2: #F4F2F9;
+  --ink: #191627; --ink-muted: #6A6480; --rule: #DCD8E6;
+  --done-bg: #EDEAF4; --done-ink: #8B84A6;
+  --todo-bg: #6D4AC4; --todo-ink: #FFFFFF;
+  --today: #C2410C;
+  --shadow: 0 1px 2px rgba(25,22,39,0.06), 0 2px 8px rgba(25,22,39,0.04);
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.mono {
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.wrap { max-width: 1400px; margin: 0 auto; padding: 28px 18px 56px; }
+
+.eyebrow {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.66rem;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-muted); margin: 0 0 8px;
+}
+h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 6px; }
+.sub { color: var(--ink-muted); font-size: 0.9rem; margin: 0; line-height: 1.5; max-width: 66ch; }
+
+/* Controls */
+.bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 22px 0 14px; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 9px;
+  box-shadow: var(--shadow);
+}
+.seg { display: inline-flex; background: var(--surface-2); border-radius: 7px; padding: 2px; gap: 2px; }
+.seg button {
+  border: none; background: transparent; color: var(--ink-muted);
+  font: inherit; font-size: 0.8rem; font-weight: 600; padding: 6px 12px;
+  border-radius: 5px; cursor: pointer; transition: background .12s, color .12s;
+}
+.seg button:hover { color: var(--ink); }
+.seg button.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.iconbtn {
+  border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
+  width: 32px; height: 32px; border-radius: 7px; cursor: pointer; font: inherit;
+  font-size: 1rem; display: inline-flex; align-items: center; justify-content: center;
+}
+.iconbtn:hover:not(:disabled) { background: var(--surface-2); }
+.iconbtn:disabled { opacity: .35; cursor: default; }
+.range {
+  font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums;
+  font-size: .82rem; color: var(--ink-muted); min-width: 190px; text-align: center;
+}
+input[type="date"] {
+  font: inherit; font-size: .8rem; padding: 6px 9px; border-radius: 7px;
+  border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
+}
+.spacer { margin-left: auto; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--todo-bg); outline-offset: 2px; }
+
+.legend {
+  display: flex; gap: 16px; align-items: center; font-size: .76rem;
+  color: var(--ink-muted); margin-bottom: 12px; flex-wrap: wrap;
+}
+.legend i { display: inline-block; width: 22px; height: 12px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; }
+
+/* Board */
+.board-scroll { overflow-x: auto; overflow-y: visible; padding-bottom: 8px; }
+.board { display: grid; grid-auto-flow: column; gap: 8px; align-items: start; }
+.board.wk7 { grid-auto-columns: minmax(0, 1fr); }
+.board.wide { grid-auto-columns: 152px; }
+
+.col {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 9px;
+  overflow: hidden; box-shadow: var(--shadow); min-width: 0;
+}
+.col.is-today { border-color: var(--today); }
+.col-head { padding: 9px 11px; border-bottom: 1px solid var(--rule); background: var(--surface-2); }
+.col-head .wd {
+  font-family: ui-monospace, Menlo, monospace; font-size: .62rem; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-muted); display: block;
+}
+.col-head .dm {
+  font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums;
+  font-size: 1.08rem; font-weight: 700;
+}
+.col-head .mo { font-size: .68rem; color: var(--ink-muted); margin-left: 5px; }
+.col.is-today .col-head .dm { color: var(--today); }
+.col-head .count {
+  float: right; font-family: ui-monospace, Menlo, monospace; font-size: .64rem;
+  color: var(--ink-muted); margin-top: 5px;
+}
+
+.tasks { padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.tile {
+  border: none; text-align: left; width: 100%; font: inherit;
+  padding: 7px 9px; border-radius: 6px; cursor: default;
+  font-size: .8rem; line-height: 1.3; display: block;
+  transition: transform .1s;
+}
+/* Completed reads faded and struck; incomplete stays vibrant so misses draw the eye. */
+.tile.done { background: var(--done-bg); color: var(--done-ink); text-decoration: line-through;
+  text-decoration-thickness: 1px; text-decoration-color: color-mix(in srgb, var(--done-ink) 55%, transparent); }
+.tile.todo { background: var(--todo-bg); color: var(--todo-ink); font-weight: 600; }
+.tile:hover { transform: translateX(2px); }
+.tile .w {
+  display: inline-block; margin-left: 6px; font-family: ui-monospace, Menlo, monospace;
+  font-size: .72rem; opacity: .85;
+}
+.tile .nr { font-style: italic; opacity: .7; }
+.empty { padding: 16px 10px; text-align: center; color: var(--ink-muted); font-size: .72rem; font-style: italic; }
+
+/* Tooltip */
+.tip {
+  position: fixed; pointer-events: none; opacity: 0; z-index: 50;
+  max-width: 330px; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: 9px; padding: 11px 13px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.22); font-size: .78rem; line-height: 1.5;
+  transition: opacity .09s;
+}
+.tip.on { opacity: 1; }
+.tip .t-title { font-weight: 700; font-size: .88rem; margin-bottom: 2px; }
+.tip .t-meta {
+  font-family: ui-monospace, Menlo, monospace; font-size: .68rem;
+  color: var(--ink-muted); margin-bottom: 8px;
+}
+.tip .t-row { display: flex; gap: 8px; margin-top: 3px; }
+.tip .t-k {
+  font-family: ui-monospace, Menlo, monospace; font-size: .66rem; color: var(--ink-muted);
+  text-transform: uppercase; letter-spacing: .06em; min-width: 74px; flex: 0 0 auto; padding-top: 1px;
+}
+.tip .t-v { min-width: 0; word-break: break-word; }
+.tip .t-notes {
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--rule);
+  white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; font-size: .7rem;
+  max-height: 190px; overflow: auto;
+}
+.badge {
+  display: inline-block; padding: 1px 6px; border-radius: 999px; font-size: .64rem;
+  font-weight: 700; letter-spacing: .03em;
+}
+.badge.done { background: var(--done-bg); color: var(--done-ink); }
+.badge.todo { background: var(--todo-bg); color: var(--todo-ink); }
+
+footer.foot {
+  margin-top: 20px; font-size: .74rem; color: var(--ink-muted); line-height: 1.6;
+  border-top: 1px solid var(--rule); padding-top: 12px;
+}
+footer.foot b { color: var(--ink); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+.appnav { display: flex; gap: 14px; margin: 0 0 16px; font-size: .82rem; }
+.appnav a { color: var(--ink-muted); text-decoration: none; }
+.appnav a:hover { color: var(--ink); text-decoration: underline; }
+.appnav a.here { color: var(--ink); font-weight: 600; }
+</style>
+
+<div class="wrap">
+  <nav class="appnav"><a href="/">Today</a><a class="here" href="/calendar">Calendar</a><a href="/weight">Weight</a></nav>
+  <p class="eyebrow">Reconciled &middot; Takeout base + Supabase weights</p>
+  <h1>Task Calendar</h1>
+  <p class="sub">Every task by day. Faded means done; vibrant means missed. Hover any tile for its notes and full record.</p>
+
+  <div class="bar">
+    <div class="seg" role="group" aria-label="Span">
+      <button type="button" data-span="7" class="active">Week</button>
+      <button type="button" data-span="14">2 weeks</button>
+      <button type="button" data-span="30">Month</button>
+    </div>
+    <button class="iconbtn" id="prev" type="button" aria-label="Previous">&larr;</button>
+    <span class="range mono" id="range"></span>
+    <button class="iconbtn" id="next" type="button" aria-label="Next">&rarr;</button>
+    <input type="date" id="jump" aria-label="Jump to date">
+    <div class="spacer"></div>
+    <div class="seg" role="group" aria-label="Lists">
+      <button type="button" id="only-daily" class="active">Daily</button>
+      <button type="button" id="all-lists">All lists</button>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><i style="background:var(--todo-bg)"></i>Not completed</span>
+    <span><i style="background:var(--done-bg);border:1px solid var(--rule)"></i>Completed</span>
+    <span id="summary"></span>
+  </div>
+
+  <div class="board-scroll"><div class="board" id="board"></div></div>
+
+  <footer class="foot">
+    <b>Read-only.</b> Rendered from the reconciled export &mdash; Google Takeout for every task and its completion status, Supabase <span class="mono">weight_log</span> for weight values. Days with no weigh-in show <span class="mono">not recorded</span> rather than an invented number. Nothing was written to Supabase or Google.
+  </footer>
+</div>
+
+<script id="bootstrap" type="application/json">__BOOTSTRAP__</script>
+<script>
+(function () {
+  var BOOT = JSON.parse(document.getElementById('bootstrap').textContent);
+  var TITLES, NOTES, LISTS, ROWS;
+
+  /* Interning happens at build time for an inlined snapshot; in live mode the
+     rows arrive raw from PostgREST, so the same pools get built here. Keeping
+     one shape means the rendering below is identical either way. */
+  function intern(pool, index, value) {
+    var k = value === null || value === undefined ? '' : String(value);
+    if (!(k in index)) { index[k] = pool.length; pool.push(k); }
+    return index[k];
+  }
+
+  var WSRC_CODE = {
+    'supabase': 1, 'not recorded': 2, 'inductive': 3, 'reported': 4
+  };
+
+  function shapeRows(records) {
+    var titles = [], notes = [], lists = [];
+    var ti = {}, ni = {}, li = {};
+    var rows = records.map(function (r) {
+      return [
+        String(r.day).slice(0, 10),
+        intern(titles, ti, r.title),
+        intern(lists, li, r.list_title),
+        r.is_completed ? 1 : 0,
+        r.notes === null || r.notes === undefined ? null : intern(notes, ni, r.notes),
+        r.completed_at || null,
+        r.weight_lbs === null || r.weight_lbs === undefined ? null : Number(r.weight_lbs),
+        WSRC_CODE[r.weight_source] || 0,
+        r.takeout_weight === null || r.takeout_weight === undefined
+          ? null : Number(r.takeout_weight),
+      ];
+    });
+    rows.sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1]; });
+    return { titles: titles, notes: notes, lists: lists, rows: rows };
+  }
+
+  var PAGE = 1000; /* PostgREST caps a response at 1000 rows; page or lose the tail. */
+
+  /* Two live shapes. Against Supabase directly the key travels in headers and
+     the response must be paged. Against our own server it is a same-origin GET
+     with no credentials at all -- the key stays server-side -- and the endpoint
+     returns the whole set, so paging would loop forever. BOOT.paged says which. */
+  function fetchAll() {
+    if (!BOOT.paged) {
+      return fetch(BOOT.endpoint, { headers: BOOT.headers || {} }).then(readJson);
+    }
+    var out = [];
+    function next(from) {
+      var headers = Object.assign({}, BOOT.headers || {}, {
+        Range: from + '-' + (from + PAGE - 1),
+        'Range-Unit': 'items',
+      });
+      return fetch(BOOT.endpoint, { headers: headers }).then(readJson).then(function (batch) {
+        out = out.concat(batch);
+        return batch.length < PAGE ? out : next(from + PAGE);
+      });
+    }
+    return next(0);
+  }
+
+  function readJson(res) {
+    if (!res.ok) {
+      return res.text().then(function (body) {
+        throw new Error('HTTP ' + res.status + ' - ' + body.slice(0, 300));
+      });
+    }
+    return res.json();
+  }
+
+  function fail(msg) {
+    document.getElementById('board').innerHTML =
+      '<div class="empty-note"><b>Could not load data.</b><br>' +
+      esc(msg) + '<br><br>Most likely the anon key is stale, or task_history ' +
+      'has no read policy for anon (RLS with no policy returns zero rows).</div>';
+  }
+
+  function boot(shaped) {
+    TITLES = shaped.titles; NOTES = shaped.notes;
+    LISTS = shaped.lists; ROWS = shaped.rows;
+    start();
+  }
+  var WSRC = ['', 'supabase', 'not recorded', 'inductive', 'reported'];
+  var DAY = 86400000;
+  var WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // rows: [day, titleIdx, listIdx, done, notesIdx, completedAt, weight, wsrc, takeoutWeight]
+  function start() {
+  var byDay = new Map();
+  ROWS.forEach(function (r, i) {
+    if (!byDay.has(r[0])) byDay.set(r[0], []);
+    byDay.get(r[0]).push(i);
+  });
+  var allDays = Array.from(byDay.keys()).sort();
+  var minDay = allDays[0], maxDay = allDays[allDays.length - 1];
+
+  function parseDay(s) { var p = s.split('-'); return Date.UTC(+p[0], +p[1] - 1, +p[2]); }
+  function fmtDay(t) {
+    var d = new Date(t);
+    return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
+           String(d.getUTCDate()).padStart(2, '0');
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  var state = { span: 7, start: null, dailyOnly: true };
+
+  /* Weeks start Monday, matching the Google Calendar view this mirrors. */
+  function mondayOf(t) {
+    var wd = (new Date(t).getUTCDay() + 6) % 7;
+    return t - wd * DAY;
+  }
+  /* "Today" must come from local calendar parts, not a UTC timestamp: west of
+     UTC the two disagree for most of the evening and the wrong column lights up. */
+  function localToday() {
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' +
+           String(d.getDate()).padStart(2, '0');
+  }
+  /* Open on the week containing today, clamped into the data's range. Anchoring
+     to the last day *with data* would land on a stray future-dated one-off. */
+  var todayT = parseDay(localToday());
+  state.start = mondayOf(Math.min(Math.max(todayT, parseDay(minDay)), parseDay(maxDay)));
+
+  function visibleRows(day) {
+    var idxs = byDay.get(day) || [];
+    if (state.dailyOnly) idxs = idxs.filter(function (i) { return LISTS[ROWS[i][2]] === 'Daily'; });
+    return idxs.slice().sort(function (a, b) {
+      return TITLES[ROWS[a][1]].localeCompare(TITLES[ROWS[b][1]]);
+    });
+  }
+
+  function render() {
+    var board = document.getElementById('board');
+    board.className = 'board ' + (state.span === 7 ? 'wk7' : 'wide');
+    board.innerHTML = '';
+
+    var todayStr = localToday();
+    var done = 0, total = 0;
+
+    for (var i = 0; i < state.span; i++) {
+      var t = state.start + i * DAY, day = fmtDay(t);
+      var rows = visibleRows(day);
+      var d = new Date(t);
+      var col = document.createElement('div');
+      col.className = 'col' + (day === todayStr ? ' is-today' : '');
+
+      var nDone = rows.filter(function (i) { return ROWS[i][3]; }).length;
+      done += nDone; total += rows.length;
+
+      var head =
+        '<div class="col-head">' +
+          (rows.length ? '<span class="count mono">' + nDone + '/' + rows.length + '</span>' : '') +
+          '<span class="wd">' + WD[d.getUTCDay()] + '</span>' +
+          '<span class="dm">' + d.getUTCDate() + '</span>' +
+          '<span class="mo mono">' + MO[d.getUTCMonth()] + " '" + String(d.getUTCFullYear()).slice(2) + '</span>' +
+        '</div>';
+
+      var body = rows.length
+        ? '<div class="tasks">' + rows.map(tile).join('') + '</div>'
+        : '<div class="empty">' + (day < minDay || day > maxDay ? 'outside range' : 'no tasks') + '</div>';
+
+      col.innerHTML = head + body;
+      board.appendChild(col);
+    }
+
+    document.getElementById('range').textContent =
+      state.start ? (fmtDay(state.start) + '  \u2192  ' + fmtDay(state.start + (state.span - 1) * DAY)) : '';
+    document.getElementById('summary').textContent =
+      total ? (done + ' of ' + total + ' completed in view') : 'nothing in view';
+    document.getElementById('prev').disabled = state.start <= parseDay(minDay) - state.span * DAY;
+    document.getElementById('next').disabled = state.start >= parseDay(maxDay);
+  }
+
+  function tile(i) {
+    var r = ROWS[i];
+    var cls = r[3] ? 'done' : 'todo';
+    var w = '';
+    if (r[7] === 1) w = '<span class="w">' + r[6].toFixed(1) + '</span>';
+    else if (r[7] === 2) w = '<span class="w nr">not rec.</span>';
+    else if (r[7] === 3) w = '<span class="w">' + r[6].toFixed(1) + '</span>';
+    else if (r[7] === 4) w = '<span class="w">' + r[6].toFixed(1) + '</span>';
+    return '<div class="tile ' + cls + '" data-r="' + i + '">' + esc(TITLES[r[1]]) + w + '</div>';
+  }
+
+  /* Tooltip: one element, repositioned. Delegated so it survives re-render. */
+  var tip = document.createElement('div');
+  tip.className = 'tip';
+  document.body.appendChild(tip);
+
+  function showTip(row, x, y) {
+    var title = TITLES[row[1]], list = LISTS[row[2]], notes = row[4] === null ? null : NOTES[row[4]];
+    var html =
+      '<div class="t-title">' + esc(title) + '</div>' +
+      '<div class="t-meta">' + row[0] + ' \u00b7 ' + esc(list) + '</div>' +
+      '<div class="t-row"><span class="t-k">Status</span><span class="t-v">' +
+        '<span class="badge ' + (row[3] ? 'done' : 'todo') + '">' +
+        (row[3] ? 'Completed' : 'Not completed') + '</span></span></div>';
+    if (row[5]) {
+      html += '<div class="t-row"><span class="t-k">Completed</span><span class="t-v mono">' +
+        esc(String(row[5]).replace('T', ' ').slice(0, 19)) + '</span></div>';
+    }
+    if (row[7] === 1) {
+      html += '<div class="t-row"><span class="t-k">Weight</span><span class="t-v mono">' +
+        row[6].toFixed(1) + ' lbs <span style="opacity:.6">(from weight_log)</span></span></div>';
+      if (row[8] !== null && Math.abs(row[8] - row[6]) > 0.05) {
+        html += '<div class="t-row"><span class="t-k">Was</span><span class="t-v mono" style="opacity:.7">' +
+          row[8].toFixed(1) + ' in Takeout</span></div>';
+      }
+    } else if (row[7] === 3) {
+      html += '<div class="t-row"><span class="t-k">Weight</span><span class="t-v mono">' +
+        row[6].toFixed(1) + ' lbs</span></div>' +
+        '<div class="t-row"><span class="t-k">Why</span><span class="t-v">' +
+        'weigh-in was recorded at the time, then destroyed by the overwrite and ' +
+        'never captured in Supabase; value determined by inductive reasoning' +
+        '</span></div>';
+    } else if (row[7] === 4) {
+      html += '<div class="t-row"><span class="t-k">Weight</span><span class="t-v mono">' +
+        row[6].toFixed(1) + ' lbs</span></div>';
+    } else if (row[7] === 2) {
+      html += '<div class="t-row"><span class="t-k">Weight</span><span class="t-v">' +
+        'not recorded \u2014 no weigh-in that day' +
+        (row[8] !== null ? ' <span style="opacity:.6">(Takeout showed ' + row[8].toFixed(1) + ')</span>' : '') +
+        '</span></div>';
+    }
+    if (notes) html += '<div class="t-notes">' + esc(notes) + '</div>';
+    tip.innerHTML = html;
+    tip.classList.add('on');
+    position(x, y);
+  }
+  function position(x, y) {
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    var left = x + 16, top = y + 16;
+    if (left + w > window.innerWidth - 8) left = x - w - 16;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, y - h - 16);
+    tip.style.left = Math.max(8, left) + 'px';
+    tip.style.top = top + 'px';
+  }
+
+  document.getElementById('board').addEventListener('mouseover', function (e) {
+    var el = e.target.closest('.tile');
+    if (!el) return;
+    showTip(ROWS[+el.dataset.r], e.clientX, e.clientY);
+  });
+  document.getElementById('board').addEventListener('mousemove', function (e) {
+    if (tip.classList.contains('on') && e.target.closest('.tile')) position(e.clientX, e.clientY);
+  });
+  document.getElementById('board').addEventListener('mouseout', function (e) {
+    if (!e.relatedTarget || !e.relatedTarget.closest || !e.relatedTarget.closest('.tile')) {
+      tip.classList.remove('on');
+    }
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-span]'), function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('[data-span]').forEach(function (x) { x.classList.remove('active'); });
+      b.classList.add('active');
+      state.span = +b.dataset.span;
+      render();
+    });
+  });
+  document.getElementById('prev').addEventListener('click', function () {
+    state.start -= state.span * DAY; render();
+  });
+  document.getElementById('next').addEventListener('click', function () {
+    state.start += state.span * DAY; render();
+  });
+  document.getElementById('jump').addEventListener('change', function (e) {
+    if (e.target.value) { state.start = parseDay(e.target.value); render(); }
+  });
+  document.getElementById('only-daily').addEventListener('click', function () {
+    state.dailyOnly = true;
+    this.classList.add('active');
+    document.getElementById('all-lists').classList.remove('active');
+    render();
+  });
+  document.getElementById('all-lists').addEventListener('click', function () {
+    state.dailyOnly = false;
+    this.classList.add('active');
+    document.getElementById('only-daily').classList.remove('active');
+    render();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowLeft') { state.start -= state.span * DAY; render(); }
+    if (e.key === 'ArrowRight') { state.start += state.span * DAY; render(); }
+  });
+
+  var j = document.getElementById('jump');
+  j.min = minDay; j.max = maxDay;
+  render();
+  }
+
+  /* Inline: the snapshot is already interned and embedded. Live: fetch the rows
+     from Supabase and intern them here, so both paths reach start() identically. */
+  if (BOOT.mode === 'live') {
+    document.getElementById('board').innerHTML =
+      '<div class="empty-note">Loading...</div>';
+    fetchAll()
+      .then(function (records) {
+        if (!records.length) { fail('task_history returned no rows.'); return; }
+        boot(shapeRows(records));
+      })
+      .catch(function (err) { fail(err && err.message ? err.message : String(err)); });
+  } else {
+    boot(BOOT.data);
+  }
+})();
+</script>

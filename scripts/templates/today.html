@@ -1,0 +1,337 @@
+<title>Today</title>
+<style>
+:root {
+  --bg: #EFEEF4; --surface: #FCFBFE; --surface-2: #F4F2F9;
+  --ink: #191627; --ink-muted: #6A6480; --rule: #DCD8E6;
+  --done-bg: #EDEAF4; --done-ink: #8B84A6;
+  --todo-bg: #6D4AC4; --todo-ink: #FFFFFF;
+  --ok: #2F6B4F; --bad: #A33A28;
+  --shadow: 0 1px 2px rgba(25,22,39,.06), 0 2px 8px rgba(25,22,39,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131019; --surface: #1B1826; --surface-2: #232032;
+    --ink: #EBE8F5; --ink-muted: #948DAD; --rule: #2E2A3D;
+    --done-bg: #221E30; --done-ink: #7B7496;
+    --todo-bg: #8B63E8; --todo-ink: #120E1C;
+    --ok: #6FBF95; --bad: #E3806B;
+    --shadow: 0 1px 2px rgba(0,0,0,.5), 0 2px 10px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131019; --surface: #1B1826; --surface-2: #232032;
+  --ink: #EBE8F5; --ink-muted: #948DAD; --rule: #2E2A3D;
+  --done-bg: #221E30; --done-ink: #7B7496;
+  --todo-bg: #8B63E8; --todo-ink: #120E1C;
+  --ok: #6FBF95; --bad: #E3806B;
+  --shadow: 0 1px 2px rgba(0,0,0,.5), 0 2px 10px rgba(0,0,0,.3);
+}
+:root[data-theme="light"] {
+  --bg: #EFEEF4; --surface: #FCFBFE; --surface-2: #F4F2F9;
+  --ink: #191627; --ink-muted: #6A6480; --rule: #DCD8E6;
+  --done-bg: #EDEAF4; --done-ink: #8B84A6;
+  --todo-bg: #6D4AC4; --todo-ink: #FFFFFF;
+  --ok: #2F6B4F; --bad: #A33A28;
+  --shadow: 0 1px 2px rgba(25,22,39,.06), 0 2px 8px rgba(25,22,39,.04);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+/* Phone-first: this is used standing in a bathroom, not at a desk. */
+.wrap { max-width: 560px; margin: 0 auto; padding: 24px 16px 64px; }
+
+header { margin-bottom: 18px; }
+.eyebrow {
+  font-family: ui-monospace, Menlo, monospace; font-size: .66rem;
+  letter-spacing: .16em; text-transform: uppercase; color: var(--ink-muted); margin: 0 0 6px;
+}
+h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
+.daynav { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.daynav2 { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.date { color: var(--ink); font-size: .95rem; font-weight: 600; flex: 1; text-align: center; }
+.step {
+  border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
+  min-width: 44px; height: 40px; border-radius: 9px; cursor: pointer;
+  font: inherit; font-size: 1.05rem; flex: 0 0 auto;
+}
+.step.wide { min-width: 0; padding: 0 14px; font-size: .84rem; font-weight: 600; }
+.step:hover { background: var(--surface-2); }
+.daynav2 input[type="date"] {
+  flex: 1; min-width: 0; font: inherit; font-size: .9rem; padding: 9px 10px;
+  border-radius: 9px; border: 1px solid var(--rule);
+  background: var(--surface); color: var(--ink);
+  font-family: ui-monospace, Menlo, monospace;
+}
+.appnav { margin-top: 12px; display: flex; gap: 14px; font-size: .82rem; }
+.appnav a { color: var(--ink-muted); text-decoration: none; }
+.appnav a:hover { color: var(--ink); text-decoration: underline; }
+.appnav a.here { color: var(--ink); font-weight: 600; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
+  box-shadow: var(--shadow); overflow: hidden; margin-bottom: 14px;
+}
+.card h2 {
+  font-size: .74rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-muted); margin: 0; padding: 11px 14px;
+  border-bottom: 1px solid var(--rule); background: var(--surface-2);
+}
+.body { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+
+/* Tap targets sized for a thumb, not a cursor. */
+.task {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  border: none; font: inherit; font-size: .96rem; text-align: left;
+  padding: 14px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--todo-bg); color: var(--todo-ink); font-weight: 600;
+  transition: background .12s, color .12s;
+}
+.task.done {
+  background: var(--done-bg); color: var(--done-ink); font-weight: 400;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--done-ink) 55%, transparent);
+}
+.task:disabled { opacity: .5; cursor: progress; }
+.read-only .task:disabled { opacity: 1; cursor: default; }
+.read-only #status { color: var(--ink-muted); }
+.box {
+  width: 20px; height: 20px; border-radius: 5px; flex: 0 0 auto;
+  border: 2px solid currentColor; display: flex; align-items: center; justify-content: center;
+}
+.task.done .box { background: var(--done-ink); border-color: var(--done-ink); }
+.task.done .box::after {
+  content: ""; width: 9px; height: 5px;
+  border-left: 2px solid var(--surface); border-bottom: 2px solid var(--surface);
+  transform: rotate(-45deg) translate(0, -1px);
+}
+.task .val { margin-left: auto; font-family: ui-monospace, Menlo, monospace; font-size: .84rem; }
+
+.field { display: flex; gap: 8px; align-items: center; padding: 4px 2px; }
+.field label {
+  font-size: .76rem; color: var(--ink-muted); min-width: 84px;
+  font-family: ui-monospace, Menlo, monospace; text-transform: uppercase; letter-spacing: .06em;
+}
+.field input {
+  flex: 1; min-width: 0; font: inherit; font-size: 1.05rem; padding: 11px 12px;
+  border-radius: 8px; border: 1px solid var(--rule);
+  background: var(--bg); color: var(--ink);
+  font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums;
+}
+.field button {
+  border: none; background: var(--todo-bg); color: var(--todo-ink);
+  font: inherit; font-weight: 700; font-size: .88rem; padding: 11px 16px;
+  border-radius: 8px; cursor: pointer;
+}
+.field button:disabled { opacity: .5; cursor: progress; }
+input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); outline-offset: 2px; }
+
+#status {
+  margin-top: 14px; font-size: .82rem; min-height: 1.3em;
+  font-family: ui-monospace, Menlo, monospace;
+}
+#status.ok { color: var(--ok); }
+#status.bad { color: var(--bad); }
+.hint { font-size: .72rem; color: var(--ink-muted); padding: 2px 2px 6px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">task-tracker</p>
+    <h1>Today</h1>
+    <div class="daynav">
+      <button class="step" id="prev-day" type="button" aria-label="Previous day">&larr;</button>
+      <div class="date mono" id="date"></div>
+      <button class="step" id="next-day" type="button" aria-label="Next day">&rarr;</button>
+    </div>
+    <div class="daynav2">
+      <input type="date" id="pick" aria-label="Jump to a date">
+      <button class="step wide" id="go-today" type="button">Today</button>
+    </div>
+    <nav class="appnav"><a class="here" href="/">Today</a><a href="/calendar">Calendar</a><a href="/weight">Weight</a><a href="/docs">API</a></nav>
+  </header>
+
+  <div class="card">
+    <h2>Measurements</h2>
+    <div class="body">
+      <div class="field">
+        <label for="weight">Weight</label>
+        <input id="weight" type="number" inputmode="decimal" step="0.2" placeholder="152.0">
+        <button id="save-weight" type="button">Save</button>
+      </div>
+      <div class="field">
+        <label for="wake">Wake up</label>
+        <input id="wake" type="time">
+        <button id="save-wake" type="button">Save</button>
+      </div>
+      <div class="hint">Saving either one also marks its task complete.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Tasks</h2>
+    <div class="body" id="tasks"></div>
+  </div>
+
+  <div id="status"></div>
+</div>
+
+<script id="bootstrap" type="application/json">__BOOTSTRAP__</script>
+<script>
+(function () {
+  var BOOT = JSON.parse(document.getElementById('bootstrap').textContent);
+  var DAY = BOOT.day;
+  var MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var WD = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+  var p = DAY.split('-').map(Number);
+  var d = new Date(Date.UTC(p[0], p[1] - 1, p[2]));
+  document.getElementById('date').textContent =
+    WD[d.getUTCDay()] + ', ' + MO[p[1] - 1] + ' ' + p[2] + ', ' + p[0];
+  document.getElementById('pick').value = DAY;
+
+  /* Navigating reloads the page rather than swapping data in place: whether a
+     day is writable is decided server-side, so the flag has to come with it. */
+  function goto(day) { location.href = '/today?day=' + day; }
+  function shift(n) {
+    var t = Date.UTC(p[0], p[1] - 1, p[2]) + n * 86400000;
+    var x = new Date(t);
+    goto(x.getUTCFullYear() + '-' +
+         String(x.getUTCMonth() + 1).padStart(2, '0') + '-' +
+         String(x.getUTCDate()).padStart(2, '0'));
+  }
+  document.getElementById('prev-day').addEventListener('click', function () { shift(-1); });
+  document.getElementById('next-day').addEventListener('click', function () { shift(1); });
+  document.getElementById('pick').addEventListener('change', function (e) {
+    if (e.target.value) goto(e.target.value);
+  });
+  document.getElementById('go-today').addEventListener('click', function () {
+    location.href = '/today';
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === 'ArrowLeft') shift(-1);
+    if (e.key === 'ArrowRight') shift(1);
+  });
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function say(msg, bad) {
+    var el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = bad ? 'bad' : 'ok';
+  }
+  function post(url) {
+    return fetch(url, { method: 'POST' }).then(function (res) {
+      if (res.ok) return res.json();
+      return res.json().catch(function () { return {}; }).then(function (j) {
+        throw new Error(j.detail || ('HTTP ' + res.status));
+      });
+    });
+  }
+
+  var WEIGH = 'Weigh yourself', WAKE = 'Wake Up';
+
+  function render(rows) {
+    var host = document.getElementById('tasks');
+    host.innerHTML = '';
+    rows.forEach(function (r) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'task' + (r.is_completed ? ' done' : '');
+      var extra = '';
+      if (r.title === WEIGH && r.weight_lbs !== null && r.weight_lbs !== undefined) {
+        extra = '<span class="val">' + Number(r.weight_lbs).toFixed(1) + '</span>';
+      }
+      b.innerHTML = '<span class="box"></span><span>' + esc(r.title) + '</span>' + extra;
+      if (!BOOT.writable) {
+        b.disabled = true;
+        b.style.cursor = 'default';
+        b.style.opacity = '1';
+      }
+      b.addEventListener('click', function () {
+        if (!BOOT.writable) return;
+        b.disabled = true;
+        post('/api/task/' + r.id + '/toggle?done=' + (!r.is_completed))
+          .then(function () { say(r.title + (r.is_completed ? ' un-done' : ' done')); return load(); })
+          .catch(function (e) { say(e.message, true); b.disabled = false; });
+      });
+      host.appendChild(b);
+
+      /* Prefill from what is already recorded, so a re-save shows the current
+         value rather than an empty box. */
+      if (r.title === WEIGH && r.weight_lbs !== null && r.weight_lbs !== undefined) {
+        document.getElementById('weight').value = Number(r.weight_lbs).toFixed(1);
+      }
+      if (r.title === WAKE && r.notes) {
+        var m = /(\d{1,2}):(\d{2})\s*([AaPp][Mm])/.exec(r.notes);
+        if (m) {
+          var h = Number(m[1]) % 12;
+          if (m[3].toLowerCase() === 'pm') h += 12;
+          document.getElementById('wake').value =
+            String(h).padStart(2, '0') + ':' + m[2];
+        }
+      }
+    });
+  }
+
+  function load() {
+    return fetch('/api/day/' + DAY)
+      .then(function (r) { return r.json(); })
+      .then(render);
+  }
+
+  document.getElementById('save-weight').addEventListener('click', function () {
+    var v = document.getElementById('weight').value;
+    if (!v) { say('Enter a weight first.', true); return; }
+    this.disabled = true;
+    var btn = this;
+    post('/api/day/' + DAY + '/weight?lbs=' + encodeURIComponent(v))
+      .then(function () { say('Weight saved: ' + Number(v).toFixed(1) + ' lbs'); return load(); })
+      .catch(function (e) { say(e.message, true); })
+      .then(function () { btn.disabled = false; });
+  });
+
+  document.getElementById('save-wake').addEventListener('click', function () {
+    var v = document.getElementById('wake').value;
+    if (!v) { say('Enter a time first.', true); return; }
+    this.disabled = true;
+    var btn = this;
+    post('/api/day/' + DAY + '/wake?time=' + encodeURIComponent(v))
+      .then(function () { say('Wake-up saved: ' + v); return load(); })
+      .catch(function (e) { say(e.message, true); })
+      .then(function () { btn.disabled = false; });
+  });
+
+  /* Days before the write floor are the reconciled history: show them, but do
+     not offer to change them. Without this the page hard-failed on any such day
+     rather than simply being read-only. */
+  if (!BOOT.writable) {
+    ['save-weight', 'save-wake'].forEach(function (id) {
+      document.getElementById(id).disabled = true;
+    });
+    ['weight', 'wake'].forEach(function (id) {
+      document.getElementById(id).disabled = true;
+    });
+    document.body.classList.add('read-only');
+    load().then(function () {
+      say('Read-only: ' + DAY + ' is before ' + BOOT.floor + ', the reconciled history.');
+    });
+  } else {
+    post('/api/day/' + DAY + '/ensure')
+      .then(load)
+      .catch(function (e) { say('Could not load: ' + e.message, true); });
+  }
+})();
+</script>

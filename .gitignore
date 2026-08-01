@@ -27,3 +27,27 @@ logs/
 
 # Takeout extraction temp
 .takeout_tmp/
+
+# Write-scoped token for one-off repair tooling (scripts/restore_task.py)
+token_rw.json
+
+# Scratch output from the export/build scripts, which default to writing here.
+# Root-anchored on purpose: the curated copies under data/ ARE tracked, and
+# these patterns must not swallow them (nor scripts/templates/weight_log.html).
+/history.json
+/reconciled.json
+/reconciled_export.json
+/weight_log.html
+/calendar.html
+/*_status.json
+/*_snapshot.json
+
+# Local data. Untracked deliberately: it is personal (weights, wake times, task
+# notes) and the reconciled record now lives in Supabase task_history. The files
+# stay on disk -- this only stops git tracking them.
+#
+# NOTE: untracking does not remove them from history. Every byte is still in
+# prior commits and needs a history purge to actually be gone. The Takeout zip
+# in particular cannot be regenerated, so give it a durable home elsewhere
+# before purging.
+data/
