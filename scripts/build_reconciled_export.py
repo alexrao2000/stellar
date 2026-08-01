@@ -52,6 +52,28 @@ CURRENT_WEIGHT_CLAUSE = re.compile(
     r"current\s*weight\s*:\s*[\d.]+\s*(?:lbs?)?", re.IGNORECASE
 )
 
+# Days where a weigh-in demonstrably happened -- the task was completed -- but
+# Supabase never captured it. These days are absent from task_completions
+# entirely, not just weight_log, so no raw note text survives there either, and
+# the overwrite destroyed the figure in Takeout.
+#
+# Supplied as {day: (weight, source)}. Applied only where the task is completed:
+# a supplied value must never manufacture a weigh-in that did not happen.
+SUPPLIED_WEIGHTS = {
+    # Determined by Alex through inductive reasoning, not recalled outright and
+    # not interpolated by this script: July sat in a ~151-156 band, the scale
+    # reads in 0.2 increments, and 152.6 is a figure actually recorded on Jul 13
+    # and Jul 28.
+    "2026-07-18": (152.6, "inductive"),
+    "2026-07-24": (152.6, "inductive"),
+    "2026-07-27": (152.6, "inductive"),
+    # Not an inference: Alex weighed in and reported 152.0 directly, and Takeout
+    # independently carries 152.0 for this day. That differs from the propagated
+    # 152.6, so it was written after the overwrite and survived it. Two agreeing
+    # sources -> a real reading.
+    "2026-07-31": (152.0, "reported"),
+}
+
 
 def load_supabase_weights(config) -> dict[str, float]:
     """day -> weight_lbs from weight_log."""
@@ -130,12 +152,25 @@ def main(argv: list[str] | None = None) -> int:
             m = CURRENT_WEIGHT.search(notes or "")
             rec["takeout_weight"] = float(m.group(2)) if m else None
             sup = weights.get(day)
-            if sup is None:
-                # No weight_log row means no weigh-in happened that day, so the
-                # Takeout figure is an artifact of the propagation rather than a
-                # measurement. Blank it: an invented number that looks real is
-                # worse than an acknowledged blank. The original is preserved in
-                # takeout_weight for audit.
+            supplied = SUPPLIED_WEIGHTS.get(day) if rec["is_completed"] else None
+            if sup is None and supplied is not None:
+                value, source = supplied
+                rec["weight_lbs"] = value
+                rec["weight_source"] = source
+                if notes:
+                    rec["notes"] = CURRENT_WEIGHT_CLAUSE.sub(
+                        # One decimal always: the scale reads in 0.2 increments,
+                        # so "152 lbs" would break the convention every other
+                        # value follows.
+                        f"Current Weight: {value:.1f} lbs", notes, count=1
+                    )
+                stats[source] = stats.get(source, 0) + 1
+            elif sup is None:
+                # No weight_log row and nothing supplied. If the task was left
+                # incomplete, no weigh-in happened, so the Takeout figure is an
+                # artifact of the overwrite rather than a measurement. Blank it:
+                # an invented number that looks real is worse than an
+                # acknowledged blank. The original stays in takeout_weight.
                 rec["weight_lbs"] = None
                 rec["weight_source"] = "not recorded"
                 if notes:
@@ -165,7 +200,9 @@ def main(argv: list[str] | None = None) -> int:
         f"  weigh-in records: {weigh_n}\n"
         f"    weight replaced from Supabase: {stats['overridden']}\n"
         f"    Supabase agreed with Takeout:  {stats['unchanged_value']}\n"
-        f"    no weigh-in that day, blanked:  {stats['not_recorded']}\n"
+        f"    supplied (inductive):          {stats.get('inductive', 0)}\n"
+        f"    supplied (reported):           {stats.get('reported', 0)}\n"
+        f"    no weigh-in that day, blanked: {stats['not_recorded']}\n"
         f"Wrote {args.out}. Supabase and Google were not written to.",
         file=sys.stderr,
     )

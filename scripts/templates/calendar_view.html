@@ -225,7 +225,7 @@ footer.foot b { color: var(--ink); font-weight: 600; }
 (function () {
   var D = JSON.parse(document.getElementById('data').textContent);
   var TITLES = D.titles, NOTES = D.notes, LISTS = D.lists, ROWS = D.rows;
-  var WSRC = ['', 'supabase', 'not recorded'];
+  var WSRC = ['', 'supabase', 'not recorded', 'inductive', 'reported'];
   var DAY = 86400000;
   var WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   var MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -326,6 +326,8 @@ footer.foot b { color: var(--ink); font-weight: 600; }
     var w = '';
     if (r[7] === 1) w = '<span class="w">' + r[6].toFixed(1) + '</span>';
     else if (r[7] === 2) w = '<span class="w nr">not rec.</span>';
+    else if (r[7] === 3) w = '<span class="w">' + r[6].toFixed(1) + '</span>';
+    else if (r[7] === 4) w = '<span class="w">' + r[6].toFixed(1) + '</span>';
     return '<div class="tile ' + cls + '" data-r="' + i + '">' + esc(TITLES[r[1]]) + w + '</div>';
   }
 
@@ -353,6 +355,16 @@ footer.foot b { color: var(--ink); font-weight: 600; }
         html += '<div class="t-row"><span class="t-k">Was</span><span class="t-v mono" style="opacity:.7">' +
           row[8].toFixed(1) + ' in Takeout</span></div>';
       }
+    } else if (row[7] === 3) {
+      html += '<div class="t-row"><span class="t-k">Weight</span><span class="t-v mono">' +
+        row[6].toFixed(1) + ' lbs</span></div>' +
+        '<div class="t-row"><span class="t-k">Why</span><span class="t-v">' +
+        'weigh-in was recorded at the time, then destroyed by the overwrite and ' +
+        'never captured in Supabase; value determined by inductive reasoning' +
+        '</span></div>';
+    } else if (row[7] === 4) {
+      html += '<div class="t-row"><span class="t-k">Weight</span><span class="t-v mono">' +
+        row[6].toFixed(1) + ' lbs</span></div>';
     } else if (row[7] === 2) {
       html += '<div class="t-row"><span class="t-k">Weight</span><span class="t-v">' +
         'not recorded \u2014 no weigh-in that day' +

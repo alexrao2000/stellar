@@ -25,7 +25,7 @@ from pathlib import Path
 
 TEMPLATE = Path(__file__).resolve().parent / "templates" / "calendar_view.html"
 
-WSRC_CODE = {None: 0, "supabase": 1, "not recorded": 2}
+WSRC_CODE = {None: 0, "supabase": 1, "not recorded": 2, "inductive": 3, "reported": 4}
 
 
 def build_payload(records: list[dict]) -> dict:
