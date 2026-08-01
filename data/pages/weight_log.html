@@ -1,0 +1,480 @@
+<title>Weight Log</title>
+<style>
+:root {
+  --bg: #E9ECF0;
+  --surface: #FBFCFD;
+  --surface-2: #F1F4F7;
+  --ink: #0F151C;
+  --ink-muted: #5C6875;
+  --rule: #D2D9E1;
+  --grid: rgba(15,21,28,0.07);
+  --accent: #1B4F8A;
+  --accent-soft: #DCE7F3;
+  --trend: #B4571C;
+  --down: #2F6B4F;
+  --up: #A33A28;
+  --shadow: 0 1px 2px rgba(15,21,28,0.06), 0 2px 8px rgba(15,21,28,0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0E1218; --surface: #161C24; --surface-2: #1D242E;
+    --ink: #E8EDF3; --ink-muted: #94A1B0; --rule: #2A3441;
+    --grid: rgba(232,237,243,0.08);
+    --accent: #6BA6E8; --accent-soft: #16283D; --trend: #E0904F;
+    --down: #6FBF95; --up: #E3806B;
+    --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 2px 10px rgba(0,0,0,0.3);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1218; --surface: #161C24; --surface-2: #1D242E;
+  --ink: #E8EDF3; --ink-muted: #94A1B0; --rule: #2A3441;
+  --grid: rgba(232,237,243,0.08);
+  --accent: #6BA6E8; --accent-soft: #16283D; --trend: #E0904F;
+  --down: #6FBF95; --up: #E3806B;
+  --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 2px 10px rgba(0,0,0,0.3);
+}
+:root[data-theme="light"] {
+  --bg: #E9ECF0; --surface: #FBFCFD; --surface-2: #F1F4F7;
+  --ink: #0F151C; --ink-muted: #5C6875; --rule: #D2D9E1;
+  --grid: rgba(15,21,28,0.07);
+  --accent: #1B4F8A; --accent-soft: #DCE7F3; --trend: #B4571C;
+  --down: #2F6B4F; --up: #A33A28;
+  --shadow: 0 1px 2px rgba(15,21,28,0.06), 0 2px 8px rgba(15,21,28,0.04);
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.mono {
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding: 32px 20px 64px; }
+
+.eyebrow {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink-muted); margin: 0 0 8px;
+}
+h1 {
+  font-size: 1.7rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 6px;
+  text-wrap: balance;
+}
+.sub { color: var(--ink-muted); font-size: 0.92rem; margin: 0; line-height: 1.5; max-width: 60ch; }
+
+/* Readout */
+.readout {
+  display: flex; align-items: flex-end; gap: 28px; flex-wrap: wrap;
+  margin: 28px 0 20px; padding: 22px 24px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.readout .now { display: flex; flex-direction: column; }
+.readout .now .lbl {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.66rem;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-muted); margin-bottom: 6px;
+}
+.readout .now .val {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums;
+  font-size: clamp(2.6rem, 8vw, 3.9rem); font-weight: 600; line-height: 0.95;
+  letter-spacing: -0.03em;
+}
+.readout .now .val .unit {
+  font-size: 0.3em; font-weight: 500; color: var(--ink-muted); margin-left: 8px;
+  letter-spacing: 0.06em;
+}
+.readout .now .when { font-size: 0.78rem; color: var(--ink-muted); margin-top: 8px; }
+.deltas { display: flex; gap: 26px; flex-wrap: wrap; margin-left: auto; }
+.delta { display: flex; flex-direction: column; gap: 5px; }
+.delta .lbl {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.62rem;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-muted);
+}
+.delta .v {
+  font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums;
+  font-size: 1.32rem; font-weight: 600;
+}
+.v.down { color: var(--down); }
+.v.up { color: var(--up); }
+
+/* Stat strip */
+.strip {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(122px, 1fr));
+  gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+  border-radius: 10px; overflow: hidden; margin-bottom: 22px; box-shadow: var(--shadow);
+}
+.cell { background: var(--surface); padding: 13px 15px; }
+.cell .lbl {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.62rem;
+  letter-spacing: 0.11em; text-transform: uppercase; color: var(--ink-muted);
+  display: block; margin-bottom: 5px;
+}
+.cell .v {
+  font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums;
+  font-size: 1.16rem; font-weight: 600; display: block;
+}
+.cell .sub2 { font-size: 0.68rem; color: var(--ink-muted); margin-top: 3px; display: block; }
+
+/* Chart card */
+.card {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.card-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 14px 18px; border-bottom: 1px solid var(--rule); background: var(--surface-2);
+}
+.card-head h2 {
+  font-size: 0.95rem; font-weight: 650; margin: 0; letter-spacing: -0.005em;
+}
+.legend { display: flex; gap: 14px; align-items: center; font-size: 0.74rem; color: var(--ink-muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.swatch.dot { width: 7px; height: 7px; border-radius: 50%; }
+.seg { display: inline-flex; background: var(--bg); border-radius: 7px; padding: 2px; gap: 2px; margin-left: auto; }
+.seg button {
+  border: none; background: transparent; color: var(--ink-muted);
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.74rem; font-weight: 600;
+  padding: 5px 11px; border-radius: 5px; cursor: pointer; letter-spacing: 0.04em;
+  transition: background 0.12s, color 0.12s;
+}
+.seg button:hover { color: var(--ink); }
+.seg button.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.seg button:focus-visible, .iconbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.chart-host { position: relative; padding: 8px 8px 4px; }
+canvas { display: block; width: 100%; height: 340px; touch-action: pan-y; }
+.tip {
+  position: absolute; pointer-events: none; opacity: 0; transition: opacity 0.1s;
+  background: var(--ink); color: var(--surface); padding: 7px 10px; border-radius: 6px;
+  font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums;
+  font-size: 0.74rem; white-space: nowrap; z-index: 5; line-height: 1.45;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.22);
+}
+.tip.on { opacity: 1; }
+.tip .tw { font-size: 0.95rem; font-weight: 700; }
+.tip .tt { color: var(--trend); }
+
+footer.foot {
+  margin-top: 20px; font-size: 0.75rem; color: var(--ink-muted); line-height: 1.6;
+  border-top: 1px solid var(--rule); padding-top: 12px;
+}
+footer.foot b { color: var(--ink); font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 620px) {
+  .deltas { margin-left: 0; gap: 20px; }
+  canvas { height: 280px; }
+  .legend { width: 100%; order: 3; }
+  .seg { margin-left: 0; }
+}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Supabase &middot; weight_log</p>
+  <h1>Weight Log</h1>
+  <p class="sub">Every daily weigh-in on record, read straight from the database.</p>
+
+  <div class="readout">
+    <div class="now">
+      <span class="lbl">Latest</span>
+      <span class="val mono" id="r-now">&mdash;<span class="unit">lbs</span></span>
+      <span class="when" id="r-when"></span>
+    </div>
+    <div class="deltas">
+      <div class="delta"><span class="lbl">Since start</span><span class="v mono" id="r-since"></span></div>
+      <div class="delta"><span class="lbl">Last 30 days</span><span class="v mono" id="r-30"></span></div>
+      <div class="delta"><span class="lbl">From peak</span><span class="v mono" id="r-peak"></span></div>
+    </div>
+  </div>
+
+  <div class="strip">
+    <div class="cell"><span class="lbl">Start</span><span class="v mono" id="s-start"></span><span class="sub2" id="s-start-d"></span></div>
+    <div class="cell"><span class="lbl">Lowest</span><span class="v mono" id="s-low"></span><span class="sub2" id="s-low-d"></span></div>
+    <div class="cell"><span class="lbl">Highest</span><span class="v mono" id="s-high"></span><span class="sub2" id="s-high-d"></span></div>
+    <div class="cell"><span class="lbl">Average</span><span class="v mono" id="s-avg"></span><span class="sub2">all time</span></div>
+    <div class="cell"><span class="lbl">Days logged</span><span class="v mono" id="s-n"></span><span class="sub2" id="s-span"></span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2 id="chart-title">All time</h2>
+      <div class="legend">
+        <span><i class="swatch dot" style="background:var(--accent)"></i>Daily</span>
+        <span><i class="swatch" style="background:var(--trend)"></i>7-day average</span>
+      </div>
+      <div class="seg" role="group" aria-label="Time range">
+        <button type="button" data-r="30">30D</button>
+        <button type="button" data-r="90">3M</button>
+        <button type="button" data-r="180">6M</button>
+        <button type="button" data-r="365">1Y</button>
+        <button type="button" data-r="0" class="active">ALL</button>
+      </div>
+    </div>
+    <div class="chart-host">
+      <canvas id="chart" aria-label="Weight over time"></canvas>
+      <div class="tip mono" id="tip"></div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <b>Read-only.</b> Rendered from <span class="mono">weight_log</span> in Supabase &mdash; <span class="mono" id="f-count"></span> weigh-ins, <span class="mono" id="f-range"></span>. Nothing was written to the database or to Google Tasks.
+  </footer>
+</div>
+
+<script id="data" type="application/json">[{"d":"2024-08-08","w":181.9},{"d":"2024-09-19","w":182.4},{"d":"2024-09-20","w":181.7},{"d":"2024-09-21","w":180.8},{"d":"2024-09-22","w":182.8},{"d":"2024-09-23","w":182.3},{"d":"2024-09-24","w":181.3},{"d":"2024-09-25","w":182.9},{"d":"2024-09-26","w":182.3},{"d":"2024-09-27","w":183.0},{"d":"2024-09-28","w":182.1},{"d":"2024-09-29","w":182.1},{"d":"2024-09-30","w":181.8},{"d":"2024-10-01","w":181.3},{"d":"2024-10-02","w":181.3},{"d":"2024-10-03","w":180.6},{"d":"2024-10-04","w":180.6},{"d":"2024-10-05","w":180.4},{"d":"2024-10-06","w":180.6},{"d":"2024-10-07","w":179.1},{"d":"2024-10-08","w":178.5},{"d":"2024-10-09","w":179.6},{"d":"2024-10-10","w":179.1},{"d":"2024-10-11","w":179.6},{"d":"2024-10-12","w":179.6},{"d":"2024-10-13","w":178.7},{"d":"2024-10-14","w":178.0},{"d":"2024-10-15","w":177.8},{"d":"2024-10-16","w":175.8},{"d":"2024-10-17","w":177.1},{"d":"2024-10-18","w":181.1},{"d":"2024-10-19","w":179.0},{"d":"2024-10-20","w":179.0},{"d":"2024-10-21","w":179.3},{"d":"2024-10-22","w":178.4},{"d":"2024-10-23","w":178.4},{"d":"2024-10-24","w":179.4},{"d":"2024-10-25","w":180.4},{"d":"2024-10-26","w":179.9},{"d":"2024-10-27","w":179.8},{"d":"2024-10-28","w":178.1},{"d":"2024-10-29","w":179.8},{"d":"2024-10-30","w":179.3},{"d":"2024-10-31","w":178.6},{"d":"2024-11-01","w":180.3},{"d":"2024-11-02","w":181.2},{"d":"2024-11-03","w":178.9},{"d":"2024-11-04","w":180.8},{"d":"2024-11-05","w":179.6},{"d":"2024-11-06","w":180.0},{"d":"2024-11-07","w":180.6},{"d":"2024-11-08","w":178.9},{"d":"2024-11-09","w":179.3},{"d":"2024-11-10","w":176.6},{"d":"2024-11-11","w":179.6},{"d":"2024-11-12","w":179.6},{"d":"2024-11-13","w":179.3},{"d":"2024-11-14","w":179.3},{"d":"2024-11-15","w":180.1},{"d":"2024-11-16","w":182.0},{"d":"2024-11-17","w":182.3},{"d":"2024-11-18","w":181.2},{"d":"2024-11-19","w":183.8},{"d":"2024-11-20","w":183.4},{"d":"2024-11-21","w":184.0},{"d":"2024-11-22","w":183.0},{"d":"2024-11-23","w":181.7},{"d":"2024-11-24","w":183.2},{"d":"2024-11-25","w":181.9},{"d":"2024-11-26","w":184.1},{"d":"2024-11-27","w":180.2},{"d":"2024-11-28","w":182.3},{"d":"2024-11-29","w":183.1},{"d":"2024-11-30","w":181.5},{"d":"2024-12-01","w":181.7},{"d":"2024-12-02","w":179.5},{"d":"2024-12-03","w":181.9},{"d":"2024-12-04","w":182.0},{"d":"2024-12-05","w":185.4},{"d":"2024-12-06","w":185.4},{"d":"2024-12-07","w":185.7},{"d":"2024-12-08","w":183.9},{"d":"2024-12-09","w":184.3},{"d":"2024-12-10","w":182.7},{"d":"2024-12-11","w":185.0},{"d":"2024-12-12","w":186.6},{"d":"2024-12-13","w":184.4},{"d":"2024-12-14","w":183.5},{"d":"2024-12-15","w":183.4},{"d":"2024-12-16","w":185.2},{"d":"2024-12-17","w":184.0},{"d":"2024-12-18","w":180.4},{"d":"2024-12-19","w":182.5},{"d":"2024-12-20","w":187.7},{"d":"2024-12-21","w":183.9},{"d":"2024-12-22","w":183.5},{"d":"2024-12-23","w":183.9},{"d":"2024-12-24","w":183.8},{"d":"2024-12-25","w":185.5},{"d":"2024-12-26","w":184.1},{"d":"2024-12-27","w":184.9},{"d":"2024-12-28","w":183.3},{"d":"2024-12-29","w":184.5},{"d":"2024-12-30","w":183.8},{"d":"2024-12-31","w":184.4},{"d":"2025-01-01","w":183.6},{"d":"2025-01-02","w":183.8},{"d":"2025-01-03","w":182.2},{"d":"2025-01-04","w":182.2},{"d":"2025-01-05","w":182.4},{"d":"2025-01-06","w":182.0},{"d":"2025-01-07","w":182.2},{"d":"2025-01-08","w":181.7},{"d":"2025-01-09","w":182.4},{"d":"2025-01-10","w":182.8},{"d":"2025-01-11","w":180.9},{"d":"2025-01-12","w":180.6},{"d":"2025-01-13","w":181.1},{"d":"2025-01-14","w":180.3},{"d":"2025-01-15","w":180.7},{"d":"2025-01-16","w":180.2},{"d":"2025-01-17","w":180.9},{"d":"2025-01-18","w":179.7},{"d":"2025-01-19","w":179.5},{"d":"2025-01-20","w":180.0},{"d":"2025-01-21","w":181.4},{"d":"2025-01-22","w":179.5},{"d":"2025-01-23","w":178.7},{"d":"2025-01-24","w":178.1},{"d":"2025-01-25","w":178.6},{"d":"2025-01-26","w":178.1},{"d":"2025-01-27","w":178.0},{"d":"2025-01-28","w":178.2},{"d":"2025-01-29","w":178.6},{"d":"2025-01-30","w":174.1},{"d":"2025-01-31","w":174.3},{"d":"2025-02-01","w":176.3},{"d":"2025-02-02","w":177.5},{"d":"2025-02-03","w":178.4},{"d":"2025-02-04","w":177.8},{"d":"2025-02-05","w":176.8},{"d":"2025-02-06","w":177.8},{"d":"2025-02-07","w":176.9},{"d":"2025-02-08","w":177.5},{"d":"2025-02-09","w":178.2},{"d":"2025-02-10","w":177.4},{"d":"2025-02-11","w":176.4},{"d":"2025-02-12","w":177.0},{"d":"2025-02-13","w":177.2},{"d":"2025-02-14","w":176.1},{"d":"2025-02-15","w":175.9},{"d":"2025-02-16","w":175.0},{"d":"2025-02-17","w":174.7},{"d":"2025-02-18","w":174.7},{"d":"2025-02-19","w":175.7},{"d":"2025-02-20","w":174.3},{"d":"2025-02-21","w":174.1},{"d":"2025-02-22","w":172.6},{"d":"2025-02-23","w":173.7},{"d":"2025-02-24","w":173.7},{"d":"2025-02-25","w":172.4},{"d":"2025-02-26","w":171.3},{"d":"2025-02-27","w":170.7},{"d":"2025-02-28","w":170.6},{"d":"2025-03-01","w":171.2},{"d":"2025-03-02","w":170.5},{"d":"2025-03-03","w":170.1},{"d":"2025-03-04","w":169.9},{"d":"2025-03-05","w":169.5},{"d":"2025-03-06","w":168.9},{"d":"2025-03-07","w":168.4},{"d":"2025-03-08","w":168.8},{"d":"2025-03-09","w":167.9},{"d":"2025-03-10","w":167.8},{"d":"2025-03-11","w":167.1},{"d":"2025-03-12","w":166.8},{"d":"2025-03-13","w":166.6},{"d":"2025-03-14","w":166.6},{"d":"2025-03-15","w":166.4},{"d":"2025-03-16","w":165.9},{"d":"2025-03-17","w":165.7},{"d":"2025-03-18","w":165.6},{"d":"2025-03-19","w":165.1},{"d":"2025-03-20","w":164.7},{"d":"2025-03-21","w":164.4},{"d":"2025-03-22","w":165.5},{"d":"2025-03-23","w":165.2},{"d":"2025-03-24","w":164.2},{"d":"2025-03-25","w":164.4},{"d":"2025-03-26","w":163.4},{"d":"2025-03-27","w":162.1},{"d":"2025-03-28","w":161.3},{"d":"2025-03-29","w":161.2},{"d":"2025-03-30","w":162.0},{"d":"2025-03-31","w":161.4},{"d":"2025-04-01","w":161.7},{"d":"2025-04-02","w":160.2},{"d":"2025-04-03","w":160.6},{"d":"2025-04-04","w":159.0},{"d":"2025-04-05","w":160.5},{"d":"2025-04-06","w":162.4},{"d":"2025-04-07","w":161.6},{"d":"2025-04-08","w":162.3},{"d":"2025-04-09","w":161.6},{"d":"2025-04-10","w":161.4},{"d":"2025-04-11","w":159.9},{"d":"2025-04-12","w":159.9},{"d":"2025-04-13","w":159.4},{"d":"2025-04-14","w":160.5},{"d":"2025-04-15","w":161.5},{"d":"2025-04-16","w":161.0},{"d":"2025-04-17","w":160.4},{"d":"2025-04-18","w":159.3},{"d":"2025-04-19","w":160.8},{"d":"2025-04-20","w":161.0},{"d":"2025-04-21","w":160.4},{"d":"2025-04-22","w":159.9},{"d":"2025-04-23","w":159.5},{"d":"2025-04-24","w":159.4},{"d":"2025-04-25","w":158.7},{"d":"2025-04-26","w":158.1},{"d":"2025-04-27","w":159.6},{"d":"2025-04-28","w":160.2},{"d":"2025-04-29","w":158.4},{"d":"2025-04-30","w":158.4},{"d":"2025-05-01","w":159.5},{"d":"2025-05-02","w":158.7},{"d":"2025-05-03","w":158.1},{"d":"2025-05-04","w":158.0},{"d":"2025-05-05","w":157.6},{"d":"2025-05-06","w":157.4},{"d":"2025-05-07","w":156.7},{"d":"2025-05-08","w":157.5},{"d":"2025-05-09","w":158.1},{"d":"2025-05-10","w":157.3},{"d":"2025-05-11","w":158.3},{"d":"2025-05-12","w":160.2},{"d":"2025-05-13","w":159.5},{"d":"2025-05-14","w":160.2},{"d":"2025-05-15","w":158.8},{"d":"2025-05-16","w":157.3},{"d":"2025-05-17","w":157.7},{"d":"2025-05-18","w":163.5},{"d":"2025-05-19","w":160.4},{"d":"2025-05-20","w":157.8},{"d":"2025-05-21","w":154.8},{"d":"2025-05-22","w":157.8},{"d":"2025-05-23","w":158.0},{"d":"2025-05-24","w":157.6},{"d":"2025-05-25","w":157.2},{"d":"2025-05-26","w":157.1},{"d":"2025-05-27","w":156.4},{"d":"2025-05-28","w":158.3},{"d":"2025-05-29","w":157.6},{"d":"2025-05-30","w":156.5},{"d":"2025-05-31","w":157.4},{"d":"2025-06-01","w":156.5},{"d":"2025-06-02","w":156.7},{"d":"2025-06-03","w":155.5},{"d":"2025-06-04","w":155.0},{"d":"2025-06-05","w":155.9},{"d":"2025-06-06","w":154.5},{"d":"2025-06-07","w":154.9},{"d":"2025-06-08","w":154.9},{"d":"2025-06-09","w":154.8},{"d":"2025-06-10","w":154.4},{"d":"2025-06-11","w":153.9},{"d":"2025-06-12","w":153.7},{"d":"2025-06-13","w":152.8},{"d":"2025-06-14","w":152.4},{"d":"2025-06-15","w":153.7},{"d":"2025-06-16","w":154.0},{"d":"2025-06-17","w":153.9},{"d":"2025-06-18","w":153.6},{"d":"2025-06-19","w":154.2},{"d":"2025-06-20","w":154.2},{"d":"2025-06-21","w":153.7},{"d":"2025-06-22","w":153.1},{"d":"2025-06-23","w":152.8},{"d":"2025-06-24","w":152.0},{"d":"2025-06-25","w":152.6},{"d":"2025-06-26","w":151.6},{"d":"2025-06-27","w":151.6},{"d":"2025-06-28","w":151.7},{"d":"2025-06-29","w":151.9},{"d":"2025-06-30","w":152.3},{"d":"2025-07-01","w":152.0},{"d":"2025-07-02","w":151.8},{"d":"2025-07-03","w":151.6},{"d":"2025-07-04","w":151.1},{"d":"2025-07-05","w":154.2},{"d":"2025-07-06","w":152.7},{"d":"2025-07-07","w":152.0},{"d":"2025-07-08","w":151.8},{"d":"2025-07-09","w":150.0},{"d":"2025-07-10","w":152.9},{"d":"2025-07-11","w":153.4},{"d":"2025-07-12","w":152.0},{"d":"2025-07-13","w":154.5},{"d":"2025-07-14","w":154.2},{"d":"2025-07-15","w":153.6},{"d":"2025-07-16","w":152.6},{"d":"2025-07-17","w":152.6},{"d":"2025-07-18","w":151.9},{"d":"2025-07-19","w":152.0},{"d":"2025-07-20","w":150.5},{"d":"2025-07-21","w":151.1},{"d":"2025-07-22","w":151.0},{"d":"2025-07-23","w":149.8},{"d":"2025-07-24","w":149.1},{"d":"2025-07-25","w":151.2},{"d":"2025-07-26","w":150.6},{"d":"2025-07-27","w":150.4},{"d":"2025-07-28","w":152.6},{"d":"2025-07-29","w":150.0},{"d":"2025-07-30","w":148.8},{"d":"2025-07-31","w":148.6},{"d":"2025-08-01","w":148.9},{"d":"2025-08-02","w":149.0},{"d":"2025-08-03","w":151.0},{"d":"2025-08-04","w":151.2},{"d":"2025-08-05","w":149.4},{"d":"2025-08-06","w":148.8},{"d":"2025-08-07","w":147.4},{"d":"2025-08-08","w":147.8},{"d":"2025-08-09","w":146.6},{"d":"2025-08-10","w":149.1},{"d":"2025-08-11","w":148.5},{"d":"2025-08-12","w":148.5},{"d":"2025-08-13","w":148.4},{"d":"2025-08-14","w":149.0},{"d":"2025-08-15","w":148.9},{"d":"2025-08-16","w":149.4},{"d":"2025-08-17","w":150.9},{"d":"2025-08-18","w":149.0},{"d":"2025-08-19","w":147.6},{"d":"2025-08-20","w":147.3},{"d":"2025-08-21","w":148.6},{"d":"2025-08-22","w":147.0},{"d":"2025-08-23","w":146.7},{"d":"2025-08-24","w":147.6},{"d":"2025-08-25","w":149.8},{"d":"2025-08-26","w":148.4},{"d":"2025-08-27","w":147.5},{"d":"2025-08-28","w":146.7},{"d":"2025-08-29","w":145.8},{"d":"2025-09-01","w":154.5},{"d":"2025-09-02","w":152.2},{"d":"2025-09-03","w":150.9},{"d":"2025-09-04","w":150.4},{"d":"2025-09-05","w":149.7},{"d":"2025-09-06","w":149.9},{"d":"2025-09-08","w":151.9},{"d":"2025-09-09","w":151.0},{"d":"2025-09-10","w":150.2},{"d":"2025-09-11","w":150.0},{"d":"2025-09-12","w":149.8},{"d":"2025-09-20","w":153.1},{"d":"2025-09-21","w":152.0},{"d":"2025-09-23","w":150.3},{"d":"2025-09-24","w":152.6},{"d":"2025-09-25","w":152.6},{"d":"2025-09-26","w":149.4},{"d":"2025-09-27","w":151.4},{"d":"2025-09-28","w":151.8},{"d":"2025-09-29","w":148.4},{"d":"2025-09-30","w":147.4},{"d":"2025-10-01","w":147.4},{"d":"2025-10-03","w":147.4},{"d":"2025-10-04","w":150.6},{"d":"2025-10-05","w":150.4},{"d":"2025-10-07","w":149.6},{"d":"2025-10-08","w":148.8},{"d":"2025-10-09","w":148.6},{"d":"2025-10-11","w":150.2},{"d":"2025-10-12","w":150.2},{"d":"2025-10-13","w":151.0},{"d":"2025-10-14","w":149.6},{"d":"2025-10-15","w":150.6},{"d":"2025-10-16","w":149.8},{"d":"2025-10-18","w":147.0},{"d":"2025-10-20","w":149.2},{"d":"2025-10-24","w":152.3},{"d":"2025-10-25","w":149.2},{"d":"2025-10-27","w":149.8},{"d":"2025-10-28","w":150.6},{"d":"2025-10-29","w":149.4},{"d":"2025-10-30","w":148.2},{"d":"2025-10-31","w":149.6},{"d":"2025-11-01","w":149.2},{"d":"2025-11-02","w":148.8},{"d":"2025-11-04","w":150.4},{"d":"2025-11-05","w":151.6},{"d":"2025-11-06","w":149.2},{"d":"2025-11-09","w":153.4},{"d":"2025-11-11","w":147.8},{"d":"2025-11-12","w":149.4},{"d":"2025-11-13","w":154.6},{"d":"2025-11-14","w":153.4},{"d":"2025-11-15","w":153.0},{"d":"2025-11-16","w":151.0},{"d":"2025-11-17","w":151.4},{"d":"2025-11-18","w":153.0},{"d":"2025-11-19","w":153.0},{"d":"2025-11-21","w":153.6},{"d":"2025-11-24","w":154.5},{"d":"2025-11-25","w":153.0},{"d":"2025-11-27","w":157.4},{"d":"2025-11-28","w":154.2},{"d":"2025-11-29","w":153.2},{"d":"2025-11-30","w":153.0},{"d":"2025-12-01","w":151.2},{"d":"2025-12-02","w":151.8},{"d":"2025-12-04","w":153.6},{"d":"2025-12-06","w":154.2},{"d":"2025-12-07","w":150.6},{"d":"2025-12-08","w":155.0},{"d":"2025-12-11","w":153.2},{"d":"2025-12-12","w":152.4},{"d":"2025-12-14","w":154.4},{"d":"2025-12-15","w":156.6},{"d":"2025-12-16","w":156.4},{"d":"2025-12-24","w":159.1},{"d":"2025-12-25","w":157.1},{"d":"2025-12-31","w":159.0},{"d":"2026-01-01","w":160.2},{"d":"2026-01-03","w":156.4},{"d":"2026-01-04","w":158.8},{"d":"2026-01-05","w":157.8},{"d":"2026-01-06","w":158.3},{"d":"2026-01-07","w":159.8},{"d":"2026-01-08","w":158.4},{"d":"2026-01-09","w":162.2},{"d":"2026-01-10","w":157.4},{"d":"2026-01-11","w":157.6},{"d":"2026-01-12","w":159.6},{"d":"2026-01-13","w":156.4},{"d":"2026-01-14","w":157.2},{"d":"2026-01-15","w":158.8},{"d":"2026-01-16","w":158.2},{"d":"2026-01-17","w":157.4},{"d":"2026-01-18","w":158.0},{"d":"2026-01-19","w":158.8},{"d":"2026-01-20","w":158.8},{"d":"2026-01-21","w":158.8},{"d":"2026-01-22","w":160.2},{"d":"2026-01-23","w":159.8},{"d":"2026-01-24","w":161.2},{"d":"2026-01-25","w":158.5},{"d":"2026-01-26","w":159.6},{"d":"2026-01-27","w":162.4},{"d":"2026-01-28","w":158.2},{"d":"2026-01-29","w":159.0},{"d":"2026-01-30","w":158.2},{"d":"2026-01-31","w":159.6},{"d":"2026-02-01","w":156.6},{"d":"2026-02-02","w":159.2},{"d":"2026-02-03","w":158.3},{"d":"2026-02-04","w":157.5},{"d":"2026-02-05","w":157.2},{"d":"2026-02-06","w":158.3},{"d":"2026-02-07","w":157.3},{"d":"2026-02-08","w":159.4},{"d":"2026-02-09","w":156.9},{"d":"2026-02-10","w":159.1},{"d":"2026-02-11","w":159.7},{"d":"2026-02-12","w":159.3},{"d":"2026-02-13","w":160.2},{"d":"2026-02-16","w":159.4},{"d":"2026-02-17","w":159.3},{"d":"2026-02-18","w":159.4},{"d":"2026-02-19","w":161.7},{"d":"2026-02-20","w":163.7},{"d":"2026-02-21","w":161.7},{"d":"2026-02-22","w":158.0},{"d":"2026-02-23","w":159.5},{"d":"2026-02-24","w":158.6},{"d":"2026-02-25","w":159.5},{"d":"2026-02-26","w":161.7},{"d":"2026-02-27","w":158.0},{"d":"2026-02-28","w":160.1},{"d":"2026-03-01","w":158.1},{"d":"2026-03-02","w":159.8},{"d":"2026-03-03","w":158.3},{"d":"2026-03-04","w":160.7},{"d":"2026-03-05","w":159.0},{"d":"2026-03-06","w":161.0},{"d":"2026-03-07","w":160.0},{"d":"2026-03-09","w":155.5},{"d":"2026-03-10","w":156.5},{"d":"2026-03-11","w":158.3},{"d":"2026-03-12","w":160.4},{"d":"2026-03-13","w":158.8},{"d":"2026-03-14","w":159.2},{"d":"2026-03-15","w":159.2},{"d":"2026-03-16","w":160.9},{"d":"2026-03-17","w":160.5},{"d":"2026-03-18","w":157.5},{"d":"2026-03-19","w":160.4},{"d":"2026-03-20","w":158.5},{"d":"2026-03-21","w":160.5},{"d":"2026-03-22","w":160.5},{"d":"2026-03-23","w":159.5},{"d":"2026-03-24","w":158.5},{"d":"2026-03-25","w":158.6},{"d":"2026-03-26","w":158.5},{"d":"2026-03-27","w":159.1},{"d":"2026-03-28","w":159.1},{"d":"2026-03-29","w":159.5},{"d":"2026-03-30","w":159.0},{"d":"2026-03-31","w":158.5},{"d":"2026-04-01","w":159.1},{"d":"2026-04-02","w":159.5},{"d":"2026-04-03","w":158.5},{"d":"2026-04-04","w":159.1},{"d":"2026-04-06","w":161.2},{"d":"2026-04-07","w":161.2},{"d":"2026-04-08","w":161.8},{"d":"2026-04-10","w":162.8},{"d":"2026-04-11","w":165.2},{"d":"2026-04-12","w":167.4},{"d":"2026-04-13","w":154.2},{"d":"2026-04-14","w":163.3},{"d":"2026-04-15","w":165.2},{"d":"2026-04-16","w":163.0},{"d":"2026-04-17","w":156.8},{"d":"2026-04-18","w":165.2},{"d":"2026-04-19","w":152.3},{"d":"2026-04-20","w":164.2},{"d":"2026-04-21","w":163.8},{"d":"2026-04-22","w":163.8},{"d":"2026-04-23","w":165.1},{"d":"2026-04-24","w":162.9},{"d":"2026-04-25","w":161.9},{"d":"2026-04-26","w":166.2},{"d":"2026-04-27","w":161.6},{"d":"2026-04-28","w":163.0},{"d":"2026-04-29","w":162.9},{"d":"2026-04-30","w":166.2},{"d":"2026-05-01","w":162.4},{"d":"2026-05-02","w":161.7},{"d":"2026-05-03","w":163.9},{"d":"2026-05-04","w":164.5},{"d":"2026-05-05","w":162.7},{"d":"2026-05-06","w":162.3},{"d":"2026-05-07","w":161.8},{"d":"2026-05-08","w":160.3},{"d":"2026-05-09","w":160.7},{"d":"2026-05-10","w":161.7},{"d":"2026-05-11","w":161.0},{"d":"2026-05-12","w":161.9},{"d":"2026-05-13","w":161.5},{"d":"2026-05-14","w":160.5},{"d":"2026-05-15","w":160.3},{"d":"2026-05-16","w":159.0},{"d":"2026-05-17","w":158.6},{"d":"2026-05-18","w":158.5},{"d":"2026-05-19","w":159.2},{"d":"2026-05-20","w":159.8},{"d":"2026-05-21","w":159.6},{"d":"2026-05-22","w":158.4},{"d":"2026-05-23","w":157.8},{"d":"2026-05-24","w":158.4},{"d":"2026-05-25","w":162.0},{"d":"2026-05-26","w":160.2},{"d":"2026-05-27","w":159.0},{"d":"2026-05-28","w":158.0},{"d":"2026-05-29","w":157.4},{"d":"2026-05-30","w":158.4},{"d":"2026-05-31","w":156.6},{"d":"2026-06-01","w":156.6},{"d":"2026-06-02","w":156.8},{"d":"2026-06-03","w":156.2},{"d":"2026-06-04","w":158.2},{"d":"2026-06-08","w":161.6},{"d":"2026-06-09","w":161.6},{"d":"2026-06-10","w":158.6},{"d":"2026-06-11","w":156.6},{"d":"2026-06-12","w":156.4},{"d":"2026-06-13","w":156.2},{"d":"2026-06-14","w":156.4},{"d":"2026-06-15","w":156.8},{"d":"2026-06-16","w":155.8},{"d":"2026-06-17","w":155.4},{"d":"2026-06-18","w":153.2},{"d":"2026-06-19","w":153.0},{"d":"2026-06-20","w":153.0},{"d":"2026-06-21","w":157.6},{"d":"2026-06-22","w":155.0},{"d":"2026-06-23","w":153.8},{"d":"2026-06-24","w":153.4},{"d":"2026-06-25","w":153.4},{"d":"2026-06-26","w":153.2},{"d":"2026-06-27","w":152.6},{"d":"2026-06-28","w":154.0},{"d":"2026-06-29","w":152.8},{"d":"2026-06-30","w":152.6},{"d":"2026-07-01","w":155.2},{"d":"2026-07-02","w":155.2},{"d":"2026-07-03","w":153.8},{"d":"2026-07-04","w":154.6},{"d":"2026-07-05","w":153.8},{"d":"2026-07-06","w":153.4},{"d":"2026-07-07","w":153.6},{"d":"2026-07-08","w":153.8},{"d":"2026-07-09","w":151.8},{"d":"2026-07-10","w":151.4},{"d":"2026-07-11","w":150.8},{"d":"2026-07-12","w":150.6},{"d":"2026-07-13","w":152.6},{"d":"2026-07-14","w":151.6},{"d":"2026-07-15","w":150.8},{"d":"2026-07-16","w":153.0},{"d":"2026-07-17","w":152.4},{"d":"2026-07-20","w":155.6},{"d":"2026-07-21","w":153.8},{"d":"2026-07-22","w":155.8},{"d":"2026-07-23","w":154.0},{"d":"2026-07-28","w":152.6},{"d":"2026-07-29","w":151.6},{"d":"2026-07-30","w":153.4}]</script>
+<script>
+(function () {
+  var ALL = JSON.parse(document.getElementById('data').textContent);
+  ALL.forEach(function (p) { p.t = Date.parse(p.d + 'T00:00:00Z'); });
+  ALL.sort(function (a, b) { return a.t - b.t; });
+
+  var MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var DAY = 86400000;
+
+  function fmtDate(t) {
+    var d = new Date(t);
+    return MO[d.getUTCMonth()] + ' ' + d.getUTCDate() + ', ' + d.getUTCFullYear();
+  }
+  function fmtShort(t) {
+    var d = new Date(t);
+    return MO[d.getUTCMonth()] + " '" + String(d.getUTCFullYear()).slice(2);
+  }
+  /* Non-ASCII is written as \u escapes throughout: the page carries no charset
+     declaration of its own, so a raw UTF-8 glyph here renders as mojibake
+     wherever the host serves text/html without charset=utf-8. */
+  function signed(v) { return (v > 0 ? '+' : v < 0 ? '\u2212' : '') + Math.abs(v).toFixed(1); }
+  function setDelta(el, v, suffix) {
+    el.textContent = signed(v) + (suffix || '');
+    el.classList.toggle('down', v < 0);
+    el.classList.toggle('up', v > 0);
+  }
+
+  /* Trailing 7-calendar-day mean, so gaps in logging don't distort the line. */
+  function movingAvg(pts) {
+    var out = [], lo = 0;
+    for (var i = 0; i < pts.length; i++) {
+      while (pts[lo].t < pts[i].t - 6 * DAY) lo++;
+      var s = 0;
+      for (var j = lo; j <= i; j++) s += pts[j].w;
+      out.push(s / (i - lo + 1));
+    }
+    return out;
+  }
+
+  /* ---- Summary stats (always all-time) ---- */
+  var first = ALL[0], last = ALL[ALL.length - 1];
+  var lowest = ALL.reduce(function (a, b) { return b.w < a.w ? b : a; });
+  var highest = ALL.reduce(function (a, b) { return b.w > a.w ? b : a; });
+  var avg = ALL.reduce(function (s, p) { return s + p.w; }, 0) / ALL.length;
+  var cutoff30 = last.t - 30 * DAY;
+  var win30 = ALL.filter(function (p) { return p.t >= cutoff30; });
+
+  document.getElementById('r-now').innerHTML = last.w.toFixed(1) + '<span class="unit">lbs</span>';
+  document.getElementById('r-when').textContent = fmtDate(last.t);
+  setDelta(document.getElementById('r-since'), last.w - first.w);
+  setDelta(document.getElementById('r-30'), win30.length > 1 ? last.w - win30[0].w : 0);
+  setDelta(document.getElementById('r-peak'), last.w - highest.w);
+
+  document.getElementById('s-start').textContent = first.w.toFixed(1);
+  document.getElementById('s-start-d').textContent = fmtDate(first.t);
+  document.getElementById('s-low').textContent = lowest.w.toFixed(1);
+  document.getElementById('s-low-d').textContent = fmtDate(lowest.t);
+  document.getElementById('s-high').textContent = highest.w.toFixed(1);
+  document.getElementById('s-high-d').textContent = fmtDate(highest.t);
+  document.getElementById('s-avg').textContent = avg.toFixed(1);
+  document.getElementById('s-n').textContent = ALL.length;
+  document.getElementById('s-span').textContent = fmtShort(first.t) + ' \u2013 ' + fmtShort(last.t);
+  document.getElementById('f-count').textContent = ALL.length;
+  document.getElementById('f-range').textContent = first.d + ' \u2192 ' + last.d;
+
+  /* ---- Chart ---- */
+  var cv = document.getElementById('chart');
+  var ctx = cv.getContext('2d');
+  var tip = document.getElementById('tip');
+  var range = 0, view = ALL, avgLine = movingAvg(ALL), geo = null, hoverIdx = -1;
+
+  function css(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function setRange(days) {
+    range = days;
+    view = days ? ALL.filter(function (p) { return p.t >= last.t - days * DAY; }) : ALL;
+    if (view.length < 2) view = ALL.slice(-2);
+    avgLine = movingAvg(view);
+    document.getElementById('chart-title').textContent =
+      days === 0 ? 'All time' : days === 365 ? 'Last 12 months'
+      : days === 180 ? 'Last 6 months' : days === 90 ? 'Last 3 months' : 'Last 30 days';
+    draw();
+  }
+
+  function niceTicks(min, max, target) {
+    var span = max - min || 1;
+    var raw = span / target;
+    var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    var norm = raw / mag;
+    var step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+    var out = [], v = Math.ceil(min / step) * step;
+    for (; v <= max + 1e-9; v += step) out.push(Math.round(v * 100) / 100);
+    return out;
+  }
+
+  function draw() {
+    var dpr = window.devicePixelRatio || 1;
+    var w = cv.clientWidth, h = cv.clientHeight;
+    if (!w || !h) return;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    var cInk = css('--ink'), cMut = css('--ink-muted'), cGrid = css('--grid');
+    var cAcc = css('--accent'), cTr = css('--trend'), cSurf = css('--surface');
+
+    var padL = 46, padR = 14, padT = 14, padB = 30;
+    var iw = w - padL - padR, ih = h - padT - padB;
+
+    var lo = Math.min.apply(null, view.map(function (p) { return p.w; }));
+    var hi = Math.max.apply(null, view.map(function (p) { return p.w; }));
+    var pad = Math.max((hi - lo) * 0.12, 1.2);
+    var yMin = lo - pad, yMax = hi + pad;
+    var t0 = view[0].t, t1 = view[view.length - 1].t || t0 + DAY;
+
+    function X(t) { return padL + (t1 === t0 ? 0 : (t - t0) / (t1 - t0)) * iw; }
+    function Y(v) { return padT + (1 - (v - yMin) / (yMax - yMin)) * ih; }
+    geo = { X: X, Y: Y, padL: padL, iw: iw, t0: t0, t1: t1 };
+
+    /* y grid */
+    ctx.font = '11px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    niceTicks(yMin, yMax, 5).forEach(function (v) {
+      var y = Y(v);
+      ctx.strokeStyle = cGrid; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, Math.round(y) + 0.5); ctx.lineTo(w - padR, Math.round(y) + 0.5); ctx.stroke();
+      ctx.fillStyle = cMut; ctx.fillText(v.toFixed(0), padL - 9, y);
+    });
+
+    /* x labels */
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    var seen = {}, labels = [];
+    view.forEach(function (p) {
+      var d = new Date(p.t), k = d.getUTCFullYear() + '-' + d.getUTCMonth();
+      if (!seen[k]) { seen[k] = 1; labels.push(p.t); }
+    });
+    var stride = Math.ceil(labels.length / Math.max(2, Math.floor(iw / 74)));
+    labels.forEach(function (t, i) {
+      if (i % stride) return;
+      ctx.fillStyle = cMut;
+      ctx.fillText(fmtShort(t), X(t), h - padB + 8);
+    });
+
+    /* daily points */
+    ctx.fillStyle = cAcc;
+    var r = view.length > 400 ? 1.3 : view.length > 150 ? 1.9 : 2.6;
+    ctx.globalAlpha = view.length > 400 ? 0.5 : 0.72;
+    view.forEach(function (p) {
+      ctx.beginPath(); ctx.arc(X(p.t), Y(p.w), r, 0, Math.PI * 2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    /* moving-average line */
+    ctx.strokeStyle = cTr; ctx.lineWidth = 2.1;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath();
+    view.forEach(function (p, i) {
+      var x = X(p.t), y = Y(avgLine[i]);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+
+    /* hover crosshair */
+    if (hoverIdx >= 0 && hoverIdx < view.length) {
+      var p = view[hoverIdx], hx = X(p.t);
+      ctx.strokeStyle = cMut; ctx.globalAlpha = 0.4; ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(hx, padT); ctx.lineTo(hx, h - padB); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+      ctx.fillStyle = cTr;
+      ctx.beginPath(); ctx.arc(hx, Y(avgLine[hoverIdx]), 3.6, 0, Math.PI * 2); ctx.fill();
+
+      ctx.fillStyle = cAcc; ctx.strokeStyle = cSurf; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(hx, Y(p.w), 4.6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+  }
+
+  function nearest(clientX) {
+    if (!geo) return -1;
+    var rect = cv.getBoundingClientRect();
+    var x = clientX - rect.left;
+    var frac = (x - geo.padL) / geo.iw;
+    var t = geo.t0 + frac * (geo.t1 - geo.t0);
+    var best = 0, bd = Infinity;
+    for (var i = 0; i < view.length; i++) {
+      var d = Math.abs(view[i].t - t);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  function showTip(clientX) {
+    var i = nearest(clientX);
+    if (i < 0) return;
+    hoverIdx = i; draw();
+    var p = view[i];
+    tip.innerHTML = '<span class="tw">' + p.w.toFixed(1) + ' lbs</span><br>' + fmtDate(p.t) +
+      '<br><span class="tt">avg ' + avgLine[i].toFixed(1) + '</span>';
+    tip.classList.add('on');
+    var host = cv.parentElement.getBoundingClientRect();
+    var px = geo.X(p.t), py = geo.Y(p.w);
+    var tw = tip.offsetWidth, th = tip.offsetHeight;
+    var left = px + 14;
+    if (left + tw > host.width - 4) left = px - tw - 14;
+    tip.style.left = Math.max(4, left) + 'px';
+    tip.style.top = Math.max(4, Math.min(py - th / 2, host.height - th - 4)) + 'px';
+  }
+  function hideTip() { hoverIdx = -1; tip.classList.remove('on'); draw(); }
+
+  cv.addEventListener('mousemove', function (e) { showTip(e.clientX); });
+  cv.addEventListener('mouseleave', hideTip);
+  cv.addEventListener('touchstart', function (e) { showTip(e.touches[0].clientX); }, { passive: true });
+  cv.addEventListener('touchmove', function (e) { showTip(e.touches[0].clientX); }, { passive: true });
+  cv.addEventListener('touchend', hideTip);
+
+  Array.prototype.forEach.call(document.querySelectorAll('.seg button'), function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.seg button').forEach(function (x) { x.classList.remove('active'); });
+      b.classList.add('active');
+      hoverIdx = -1; tip.classList.remove('on');
+      setRange(Number(b.dataset.r));
+    });
+  });
+
+  window.addEventListener('resize', draw);
+
+  /* draw() no-ops while the canvas has zero size. In an embedded frame the
+     element can get its real size after load, and that resizes no window --
+     so without this the chart would stay permanently blank. */
+  if (window.ResizeObserver) {
+    new ResizeObserver(function () { draw(); }).observe(cv);
+  } else {
+    var tries = 0;
+    var poll = setInterval(function () {
+      if (cv.clientWidth && cv.clientHeight) { draw(); clearInterval(poll); }
+      if (++tries > 40) clearInterval(poll);
+    }, 100);
+  }
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    (mq.addEventListener ? mq.addEventListener.bind(mq, 'change') : mq.addListener.bind(mq))(draw);
+  }
+  new MutationObserver(draw).observe(document.documentElement, {
+    attributes: true, attributeFilter: ['data-theme']
+  });
+
+  setRange(0);
+})();
+</script>
