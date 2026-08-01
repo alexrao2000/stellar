@@ -2,14 +2,22 @@ name: Supabase keepalive
 
 # Keeps the free-tier Supabase project from pausing. Runs independently of the
 # Google sync so an expired Google token can't cause the project to pause.
+#
+# Daily, not every other day. Supabase pauses after ~7 days of inactivity, so a
+# 2-day cadence left only three attempts of margin -- and this job is the single
+# thing preventing the database becoming unreachable. Daily gives six.
 on:
   schedule:
-    - cron: "17 6 */2 * *"  # every 2 days at 06:17 UTC
+    - cron: "17 6 * * *"  # 06:17 UTC daily
   workflow_dispatch: {}
 
 concurrency:
   group: supabase-keepalive
   cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write # so a failure can open an issue instead of failing silently
 
 jobs:
   keepalive:
@@ -32,3 +40,49 @@ jobs:
 
       - name: Ping Supabase
         run: python -m src.keepalive
+
+      # A silent failure is the dangerous case: the project pauses ~7 days later
+      # with no warning. Surface it as an issue, reusing an open one so repeated
+      # failures comment rather than spam.
+      - name: Report failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+                        `/actions/runs/${context.runId}`;
+            const body = [
+              `The Supabase keepalive job failed. Run: ${url}`,
+              '',
+              'This job is what stops the free-tier project pausing after ~7 days',
+              'of inactivity. If it keeps failing the database becomes unreachable.',
+              '',
+              'Most likely causes:',
+              '- the SUPABASE_SERVICE_ROLE_KEY secret is stale (rotated key?)',
+              '- Supabase disabled legacy API keys again',
+              '- the project is already paused',
+            ].join('\n');
+
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'keepalive',
+            });
+
+            if (open.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: open[0].number,
+                body: `Failed again - ${url}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Supabase keepalive is failing',
+                body,
+                labels: ['keepalive'],
+              });
+            }
