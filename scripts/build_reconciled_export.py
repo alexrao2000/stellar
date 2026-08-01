@@ -12,9 +12,13 @@ Neither store is correct on its own:
 
 So: take everything from Takeout, and override only the weight. Where weight_log
 has a value for a day, it replaces the number inside that day's "Current Weight:"
-note; the surrounding note text is preserved. Where it does not, the Takeout note
-is passed through untouched and flagged, so a substituted value is never confused
-with an original one.
+note; the surrounding note text is preserved.
+
+Where it does not, no weigh-in happened that day at all -- those are days without
+a scale, not days whose reading went missing. The Takeout figure there is
+propagation residue rather than a measurement, so the value is blanked and marked
+"not recorded". An invented number that looks real is worse than an acknowledged
+blank; the original is kept in takeout_weight for audit.
 
 Read-only. Writes a JSON file; touches neither Supabase nor Google.
 
@@ -41,6 +45,12 @@ from .parse_takeout_status import _day_of, _load_tasks_json
 
 # Matches the number in "Current Weight: 151.6 lbs" so it can be swapped in place.
 CURRENT_WEIGHT = re.compile(r"(current\s*weight\s*:\s*)([\d.]+)", re.IGNORECASE)
+
+# Matches the whole figure including its unit, so a value that was never measured
+# can be removed outright instead of leaving a stray number behind.
+CURRENT_WEIGHT_CLAUSE = re.compile(
+    r"current\s*weight\s*:\s*[\d.]+\s*(?:lbs?)?", re.IGNORECASE
+)
 
 
 def load_supabase_weights(config) -> dict[str, float]:
@@ -101,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     entries = collect_takeout(data, tz)
     print(f"  {len(entries)} unique (day, list, title) record(s).", file=sys.stderr)
 
-    out, stats = [], {"overridden": 0, "kept_takeout": 0, "unchanged_value": 0}
+    out, stats = [], {"overridden": 0, "not_recorded": 0, "unchanged_value": 0}
     for e in entries:
         t, day = e["task"], e["day"]
         notes = t.get("notes")
@@ -121,9 +131,18 @@ def main(argv: list[str] | None = None) -> int:
             rec["takeout_weight"] = float(m.group(2)) if m else None
             sup = weights.get(day)
             if sup is None:
-                rec["weight_lbs"] = rec["takeout_weight"]
-                rec["weight_source"] = "takeout (no weight_log row)"
-                stats["kept_takeout"] += 1
+                # No weight_log row means no weigh-in happened that day, so the
+                # Takeout figure is an artifact of the propagation rather than a
+                # measurement. Blank it: an invented number that looks real is
+                # worse than an acknowledged blank. The original is preserved in
+                # takeout_weight for audit.
+                rec["weight_lbs"] = None
+                rec["weight_source"] = "not recorded"
+                if notes:
+                    rec["notes"] = CURRENT_WEIGHT_CLAUSE.sub(
+                        "Current Weight: (not recorded)", notes, count=1
+                    )
+                stats["not_recorded"] += 1
             else:
                 rec["weight_lbs"] = sup
                 rec["weight_source"] = "supabase"
@@ -146,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         f"  weigh-in records: {weigh_n}\n"
         f"    weight replaced from Supabase: {stats['overridden']}\n"
         f"    Supabase agreed with Takeout:  {stats['unchanged_value']}\n"
-        f"    no Supabase row, Takeout kept: {stats['kept_takeout']}\n"
+        f"    no weigh-in that day, blanked:  {stats['not_recorded']}\n"
         f"Wrote {args.out}. Supabase and Google were not written to.",
         file=sys.stderr,
     )
