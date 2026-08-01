@@ -369,9 +369,15 @@ def api_set_wake(day: str, time: str) -> dict:
 # --------------------------------------------------------------------------- #
 # Pages
 # --------------------------------------------------------------------------- #
+@app.get("/", response_class=HTMLResponse)
 @app.get("/today", response_class=HTMLResponse)
 def page_today(day: str | None = None) -> str:
-    """The daily check-in. Defaults to today in the configured local timezone."""
+    """The daily check-in, and the app's front door.
+
+    Served at both / and /today. Recording the day is the thing done every
+    day; the calendar and charts are for looking back, so they sit one click
+    away rather than in the way.
+    """
     from zoneinfo import ZoneInfo
 
     from .timezones import resolve_timezone
@@ -389,7 +395,7 @@ def page_today(day: str | None = None) -> str:
     })
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/calendar", response_class=HTMLResponse)
 def page_calendar() -> str:
     # Same-origin, no credentials, whole set in one response.
     return _render("calendar_view.html", {

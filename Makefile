@@ -43,7 +43,8 @@ restore-task:
 # The key stays in this process; pages fetch same-origin, so nothing ships to
 # the browser. Read-only.
 dev:
-	$(PYTHON) -m uvicorn src.server:app --reload --port 8000
+	$(PYTHON) -m uvicorn src.server:app --port 8000 --reload \
+	  --reload-dir src --reload-dir scripts/templates --reload-include '*.html'
 
 dashboard:
 	$(STREAMLIT) run dashboard/app.py

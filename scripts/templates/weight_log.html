@@ -171,9 +171,15 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   .legend { width: 100%; order: 3; }
   .seg { margin-left: 0; }
 }
+
+.appnav { display: flex; gap: 14px; margin: 0 0 16px; font-size: .82rem; }
+.appnav a { color: var(--ink-muted); text-decoration: none; }
+.appnav a:hover { color: var(--ink); text-decoration: underline; }
+.appnav a.here { color: var(--ink); font-weight: 600; }
 </style>
 
 <div class="wrap">
+  <nav class="appnav"><a href="/">Today</a><a href="/calendar">Calendar</a><a class="here" href="/weight">Weight</a></nav>
   <p class="eyebrow">Supabase &middot; weight_log</p>
   <h1>Weight Log</h1>
   <p class="sub">Every daily weigh-in on record, read straight from the database.</p>
