@@ -225,12 +225,11 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   </footer>
 </div>
 
-<script id="data" type="application/json">__DATA__</script>
+<script id="bootstrap" type="application/json">__BOOTSTRAP__</script>
 <script>
 (function () {
-  var ALL = JSON.parse(document.getElementById('data').textContent);
-  ALL.forEach(function (p) { p.t = Date.parse(p.d + 'T00:00:00Z'); });
-  ALL.sort(function (a, b) { return a.t - b.t; });
+  var BOOT = JSON.parse(document.getElementById('bootstrap').textContent);
+  var ALL;
 
   var MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   var DAY = 86400000;
@@ -264,6 +263,10 @@ footer.foot b { color: var(--ink); font-weight: 600; }
     }
     return out;
   }
+
+  function start() {
+  ALL.forEach(function (p) { p.t = Date.parse(p.d + 'T00:00:00Z'); });
+  ALL.sort(function (a, b) { return a.t - b.t; });
 
   /* ---- Summary stats (always all-time) ---- */
   var first = ALL[0], last = ALL[ALL.length - 1];
@@ -476,5 +479,27 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   });
 
   setRange(0);
+  }
+
+  if (BOOT.mode === 'live') {
+    fetch(BOOT.endpoint, { headers: BOOT.headers || {} })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        if (!data.length) throw new Error('no weigh-ins returned');
+        ALL = data;
+        start();
+      })
+      .catch(function (err) {
+        document.getElementById('r-now').textContent = '--';
+        document.getElementById('r-when').textContent =
+          'Could not load: ' + (err && err.message ? err.message : String(err));
+      });
+  } else {
+    ALL = BOOT.data;
+    start();
+  }
 })();
 </script>

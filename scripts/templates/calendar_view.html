@@ -262,28 +262,21 @@ footer.foot b { color: var(--ink); font-weight: 600; }
 
   var PAGE = 1000; /* PostgREST caps a response at 1000 rows; page or lose the tail. */
 
+  /* Two live shapes. Against Supabase directly the key travels in headers and
+     the response must be paged. Against our own server it is a same-origin GET
+     with no credentials at all -- the key stays server-side -- and the endpoint
+     returns the whole set, so paging would loop forever. BOOT.paged says which. */
   function fetchAll() {
+    if (!BOOT.paged) {
+      return fetch(BOOT.endpoint, { headers: BOOT.headers || {} }).then(readJson);
+    }
     var out = [];
     function next(from) {
-      var url = BOOT.url + '/rest/v1/task_history'
-        + '?select=day,list_title,title,is_completed,completed_at,notes,'
-        + 'weight_lbs,weight_source,takeout_weight'
-        + '&order=day.asc,title.asc';
-      return fetch(url, {
-        headers: {
-          apikey: BOOT.key,
-          Authorization: 'Bearer ' + BOOT.key,
-          Range: from + '-' + (from + PAGE - 1),
-          'Range-Unit': 'items',
-        },
-      }).then(function (res) {
-        if (!res.ok) {
-          return res.text().then(function (body) {
-            throw new Error('HTTP ' + res.status + ' - ' + body.slice(0, 300));
-          });
-        }
-        return res.json();
-      }).then(function (batch) {
+      var headers = Object.assign({}, BOOT.headers || {}, {
+        Range: from + '-' + (from + PAGE - 1),
+        'Range-Unit': 'items',
+      });
+      return fetch(BOOT.endpoint, { headers: headers }).then(readJson).then(function (batch) {
         out = out.concat(batch);
         return batch.length < PAGE ? out : next(from + PAGE);
       });
@@ -291,9 +284,18 @@ footer.foot b { color: var(--ink); font-weight: 600; }
     return next(0);
   }
 
+  function readJson(res) {
+    if (!res.ok) {
+      return res.text().then(function (body) {
+        throw new Error('HTTP ' + res.status + ' - ' + body.slice(0, 300));
+      });
+    }
+    return res.json();
+  }
+
   function fail(msg) {
     document.getElementById('board').innerHTML =
-      '<div class="empty-note"><b>Could not load from Supabase.</b><br>' +
+      '<div class="empty-note"><b>Could not load data.</b><br>' +
       esc(msg) + '<br><br>Most likely the anon key is stale, or task_history ' +
       'has no read policy for anon (RLS with no policy returns zero rows).</div>';
   }
@@ -521,7 +523,7 @@ footer.foot b { color: var(--ink); font-weight: 600; }
      from Supabase and intern them here, so both paths reach start() identically. */
   if (BOOT.mode === 'live') {
     document.getElementById('board').innerHTML =
-      '<div class="empty-note">Loading from Supabase...</div>';
+      '<div class="empty-note">Loading...</div>';
     fetchAll()
       .then(function (records) {
         if (!records.length) { fail('task_history returned no rows.'); return; }

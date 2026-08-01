@@ -51,7 +51,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     html = TEMPLATE.read_text(encoding="utf-8").replace(
-        "__DATA__", json.dumps(points, separators=(",", ":"))
+        "__BOOTSTRAP__",
+        json.dumps({"mode": "inline", "data": points}, separators=(",", ":")),
     )
     out = Path(args.out)
     out.write_text(html, encoding="utf-8")

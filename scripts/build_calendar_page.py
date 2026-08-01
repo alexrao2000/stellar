@@ -118,8 +118,18 @@ def main(argv: list[str] | None = None) -> int:
                 "service role key -- it ships to the browser."
             )
         assert_safe_to_embed(key)
-        boot = {"mode": "live", "url": config.supabase_url.rstrip("/"), "key": key}
-        summary = f"live against {boot['url']}/rest/v1/task_history"
+        base = config.supabase_url.rstrip("/")
+        boot = {
+            "mode": "live",
+            "endpoint": (
+                f"{base}/rest/v1/task_history?select=day,list_title,title,is_completed,"
+                "completed_at,notes,weight_lbs,weight_source,takeout_weight"
+                "&order=day.asc,title.asc"
+            ),
+            "headers": {"apikey": key, "Authorization": f"Bearer {key}"},
+            "paged": True,  # PostgREST caps a response at 1000 rows
+        }
+        summary = f"live against {base}/rest/v1/task_history"
     else:
         if not args.source:
             raise SystemExit("Provide a source JSON, or pass --live.")

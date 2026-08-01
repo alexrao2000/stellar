@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "task-tracker",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "uvicorn", "src.server:app", "--reload", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}
