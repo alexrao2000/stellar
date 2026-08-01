@@ -30,3 +30,8 @@ logs/
 
 # Write-scoped token for one-off repair tooling (scripts/restore_task.py)
 token_rw.json
+
+# Personal data dumps produced by scripts/export_snapshot.py and friends
+history.json
+*_status.json
+*_snapshot.json

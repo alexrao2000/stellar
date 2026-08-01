@@ -20,8 +20,20 @@ def _read_supabase(config: Config, table: str) -> pd.DataFrame:
     from supabase import create_client
 
     client = create_client(config.supabase_url, config.supabase_key)
-    resp = client.table(table).select("*").execute()
-    return pd.DataFrame(resp.data or [])
+    # PostgREST caps a single response at 1000 rows, so a plain select silently
+    # truncates larger tables (task_completions passes 1000 in ~4 months). Page
+    # through with range() until a short page signals the end.
+    step = 1000
+    start = 0
+    rows: list[dict] = []
+    while True:
+        resp = client.table(table).select("*").range(start, start + step - 1).execute()
+        batch = resp.data or []
+        rows.extend(batch)
+        if len(batch) < step:
+            break
+        start += step
+    return pd.DataFrame(rows)
 
 
 def read_table(config: Config, table: str) -> pd.DataFrame:
