@@ -16,6 +16,22 @@ your **wake-up time** and **weight** over time. Runs on a schedule so the data s
 - Idempotent upserts, so it can run as often as you like (default: hourly).
 - A Streamlit dashboard charts wake-up time and weight.
 
+## Safety: never write to Google Tasks directly
+
+**Every write to the Google Tasks API goes through a script that dry-runs by
+default and is reviewed before it is applied.** No exceptions.
+
+A write meant for one occurrence propagates to the **whole recurring series**,
+silently and irreversibly — this destroyed ~2 years of weight values here, 677
+records overwritten in a single edit. And the API cannot detect it: history is
+not enumerable, so a series cannot be compared before and after a write. A clean
+read is not evidence that a write was safe.
+
+Record data through the app (`make dev`), which writes to Supabase
+`task_history` — diffable, row-addressed and recoverable. See
+[`NOTES.md`](NOTES.md) for the incident and [`CLAUDE.md`](CLAUDE.md) for the
+full working rules.
+
 ## Data sources (important)
 
 Google's public APIs do **not** expose the full day-by-day history of recurring tasks:
@@ -163,12 +179,33 @@ make sync                          # Pull Google Tasks and store wake/weight dat
 make reauth                        # Force Google re-consent, then sync
 make import-takeout FILE=take.zip  # Backfill full history from a Takeout export
 make migrate-supabase              # Copy local SQLite data into Supabase
+make dev                           # Run the app locally: check-in, calendar, weight chart
 make keepalive                     # Ping Supabase so the free project stays active
-make restore-task ARGS="..."       # Un-delete / re-date a Google Task in place
+make restore-task ARGS="..."       # Un-delete / re-date a Google Task in place (dry run by default)
 make dashboard                     # Launch Streamlit charts
 make install-scheduler             # Install local launchd job (optional)
 make help                          # List targets
 ```
+
+## The app
+
+```bash
+make dev     # http://localhost:8000
+```
+
+| route | what |
+| --- | --- |
+| `/` | daily check-in — tap tasks, record weight and wake time, navigate days |
+| `/calendar` | every day; faded = done, vibrant = missed, hover for detail |
+| `/weight` | weigh-ins with a trailing 7-day average |
+| `/docs` | generated API docs |
+
+Reads and writes Supabase `task_history`, the reconciled record. Pages fetch
+same-origin, so the database key stays in the server process and never reaches
+the browser. Days before `WRITE_FLOOR` (`src/server.py`) are read-only.
+
+Each new day materialises itself on load from `recurring_tasks` — that table is
+what replaces Google's recurrence, which its API neither exposes nor can create.
 
 ## Recovering a deleted task
 
@@ -186,6 +223,9 @@ make restore-task ARGS="--task-id TASK_ID --undelete --due 2026-07-29 --apply"
 This needs read-write Tasks scope, which the sync deliberately does not have. The first run
 opens a browser consent flow and caches the write token separately in `token_rw.json`
 (gitignored), so the read-only token used by the sync and CI is never upgraded in place.
+
+**Always run the dry form first and read its output.** `--apply` is never the
+first command. A Google Tasks write cannot be previewed by the API or undone.
 
 Note that the Tasks API exposes **no recurrence data at all** — no series id, no parent
 pointer. Occurrences of a recurring task are related only by sharing a title, and this
