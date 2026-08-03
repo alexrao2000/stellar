@@ -22,7 +22,7 @@ import pandas as pd
 from src.config import load_config
 from src.read import read_table
 
-TEMPLATE = Path(__file__).resolve().parent / "templates" / "weight_log.html"
+TEMPLATE = Path(__file__).resolve().parent / "templates" / "series_chart.html"
 
 
 def load_points(config) -> list[dict]:
@@ -52,7 +52,22 @@ def main(argv: list[str] | None = None) -> int:
 
     html = TEMPLATE.read_text(encoding="utf-8").replace(
         "__BOOTSTRAP__",
-        json.dumps({"mode": "inline", "data": points}, separators=(",", ":")),
+        json.dumps(
+            {
+                "mode": "inline",
+                "data": points,
+                "cfg": {
+                    "title": "Weight Log",
+                    "eyebrow": "weight_log",
+                    "sub": "Every daily weigh-in on record.",
+                    "unit": "lbs",
+                    "format": "number",
+                    "invert": False,
+                    "legend": "Daily",
+                },
+            },
+            separators=(",", ":"),
+        ),
     )
     out = Path(args.out)
     out.write_text(html, encoding="utf-8")

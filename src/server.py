@@ -135,7 +135,9 @@ def api_wake() -> list[dict]:
             continue
         parsed = parse_wake_up(r["notes"])
         if parsed:
-            out.append({"d": r["day"], "time": parsed[0], "minutes": parsed[1]})
+            # `w` so the shared chart can read both series without branching;
+            # `time` is kept for anything reading this endpoint directly.
+            out.append({"d": r["day"], "time": parsed[0], "w": parsed[1]})
     return out
 
 
@@ -403,10 +405,60 @@ def page_calendar() -> str:
     })
 
 
+# Both series render through scripts/templates/series_chart.html. They differ
+# only in labels, units and axis direction, so the differences live here rather
+# than in a second copy of a 500-line template.
+WEIGHT_CFG = {
+    "title": "Weight Log",
+    "eyebrow": "task_history \u00b7 weight",
+    "sub": "Every weigh-in on record, read from the reconciled data.",
+    "unit": "lbs",
+    "format": "number",
+    "invert": False,
+    "legend": "Daily",
+    "noun": "weigh-ins",
+}
+
+WAKE_CFG = {
+    "title": "Wake-up Time",
+    "eyebrow": "task_history \u00b7 wake up",
+    "sub": "When the day started. Lower on the chart is earlier.",
+    "unit": "",
+    "format": "time",
+    # No inversion. The default already places smaller values lower, which is
+    # exactly "lower is earlier"; inverting put midnight at the top and
+    # contradicted the caption.
+    "invert": False,
+    "legend": "Daily",
+    "noun": "mornings",
+    "statLabels": {
+        "lbl-start": "First",
+        "lbl-low": "Earliest",
+        "lbl-high": "Latest riser",
+    },
+}
+
+
 @app.get("/weight", response_class=HTMLResponse)
 def page_weight() -> str:
-    return _render("weight_log.html", {
+    return _render("series_chart.html", {
         "mode": "live", "endpoint": "/api/weights", "headers": {}, "paged": False,
+        "cfg": WEIGHT_CFG,
+    })
+
+
+@app.get("/wake", response_class=HTMLResponse)
+def page_wake() -> str:
+    return _render("series_chart.html", {
+        "mode": "live", "endpoint": "/api/wake", "headers": {}, "paged": False,
+        "cfg": WAKE_CFG,
+    })
+
+
+@app.get("/data", response_class=HTMLResponse)
+def page_data() -> str:
+    return _render("data_table.html", {
+        "mode": "live", "endpoint": "/api/task_history", "headers": {}, "paged": False,
     })
 
 

@@ -1,4 +1,4 @@
-<title>Weight Log</title>
+<title>__PAGE_TITLE__</title>
 <style>
 :root {
   --bg: #E9ECF0;
@@ -179,15 +179,15 @@ footer.foot b { color: var(--ink); font-weight: 600; }
 </style>
 
 <div class="wrap">
-  <nav class="appnav"><a href="/">Today</a><a href="/calendar">Calendar</a><a class="here" href="/weight">Weight</a></nav>
-  <p class="eyebrow">Supabase &middot; weight_log</p>
-  <h1>Weight Log</h1>
-  <p class="sub">Every daily weigh-in on record, read straight from the database.</p>
+  <nav class="appnav"><a href="/">Today</a><a href="/calendar">Calendar</a><a href="/weight">Weight</a><a href="/wake">Wake</a><a href="/data">Data</a></nav>
+  <p class="eyebrow" id="eyebrow"></p>
+  <h1 id="page-title"></h1>
+  <p class="sub" id="page-sub"></p>
 
   <div class="readout">
     <div class="now">
-      <span class="lbl">Latest</span>
-      <span class="val mono" id="r-now">&mdash;<span class="unit">lbs</span></span>
+      <span class="lbl" id="lbl-latest">Latest</span>
+      <span class="val mono" id="r-now">&mdash;<span class="unit"></span></span>
       <span class="when" id="r-when"></span>
     </div>
     <div class="deltas">
@@ -198,18 +198,18 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   </div>
 
   <div class="strip">
-    <div class="cell"><span class="lbl">Start</span><span class="v mono" id="s-start"></span><span class="sub2" id="s-start-d"></span></div>
-    <div class="cell"><span class="lbl">Lowest</span><span class="v mono" id="s-low"></span><span class="sub2" id="s-low-d"></span></div>
-    <div class="cell"><span class="lbl">Highest</span><span class="v mono" id="s-high"></span><span class="sub2" id="s-high-d"></span></div>
+    <div class="cell"><span class="lbl" id="lbl-start">Start</span><span class="v mono" id="s-start"></span><span class="sub2" id="s-start-d"></span></div>
+    <div class="cell"><span class="lbl" id="lbl-low">Lowest</span><span class="v mono" id="s-low"></span><span class="sub2" id="s-low-d"></span></div>
+    <div class="cell"><span class="lbl" id="lbl-high">Highest</span><span class="v mono" id="s-high"></span><span class="sub2" id="s-high-d"></span></div>
     <div class="cell"><span class="lbl">Average</span><span class="v mono" id="s-avg"></span><span class="sub2">all time</span></div>
-    <div class="cell"><span class="lbl">Days logged</span><span class="v mono" id="s-n"></span><span class="sub2" id="s-span"></span></div>
+    <div class="cell"><span class="lbl" id="lbl-days">Days logged</span><span class="v mono" id="s-n"></span><span class="sub2" id="s-span"></span></div>
   </div>
 
   <div class="card">
     <div class="card-head">
       <h2 id="chart-title">All time</h2>
       <div class="legend">
-        <span><i class="swatch dot" style="background:var(--accent)"></i>Daily</span>
+        <span><i class="swatch dot" style="background:var(--accent)"></i><span id="lg-a">Daily</span></span>
         <span><i class="swatch" style="background:var(--trend)"></i>7-day average</span>
       </div>
       <div class="seg" role="group" aria-label="Time range">
@@ -227,7 +227,7 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   </div>
 
   <footer class="foot">
-    <b>Read-only.</b> Rendered from <span class="mono">weight_log</span> in Supabase &mdash; <span class="mono" id="f-count"></span> weigh-ins, <span class="mono" id="f-range"></span>. Nothing was written to the database or to Google Tasks.
+    <b>Read-only.</b> Rendered from <span class="mono">task_history</span> &mdash; <span class="mono" id="f-count"></span> <span id="f-noun">entries</span>, <span class="mono" id="f-range"></span>.
   </footer>
 </div>
 
@@ -251,7 +251,41 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   /* Non-ASCII is written as \u escapes throughout: the page carries no charset
      declaration of its own, so a raw UTF-8 glyph here renders as mojibake
      wherever the host serves text/html without charset=utf-8. */
-  function signed(v) { return (v > 0 ? '+' : v < 0 ? '\u2212' : '') + Math.abs(v).toFixed(1); }
+  /* Two shapes so far: a plain number (lbs) and a clock time (wake-up, held as
+     minutes past midnight). The chart machinery is identical; only formatting
+     and axis direction differ, so both come from BOOT.cfg. */
+  var CFG = BOOT.cfg;
+  document.title = CFG.title;
+  document.getElementById('page-title').textContent = CFG.title;
+  document.getElementById('eyebrow').textContent = CFG.eyebrow;
+  document.getElementById('page-sub').textContent = CFG.sub;
+  document.getElementById('lg-a').textContent = CFG.legend || 'Daily';
+  document.getElementById('f-noun').textContent = CFG.noun || 'entries';
+  /* One template serves two routes, so the active nav link is marked here. */
+  Array.prototype.forEach.call(document.querySelectorAll('.appnav a'), function (a) {
+    if (a.getAttribute('href') === location.pathname) a.classList.add('here');
+  });
+  if (CFG.statLabels) {
+    Object.keys(CFG.statLabels).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = CFG.statLabels[id];
+    });
+  }
+  function fmtVal(v) {
+    if (CFG.format === 'time') {
+      var m = Math.round(v), h = Math.floor(m / 60) % 24;
+      return String(h).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+    }
+    return v.toFixed(1);
+  }
+  function signed(v) {
+    var s = (v > 0 ? '+' : v < 0 ? '\u2212' : '');
+    if (CFG.format === 'time') {
+      var m = Math.round(Math.abs(v));
+      return s + Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
+    }
+    return s + Math.abs(v).toFixed(1);
+  }
   function setDelta(el, v, suffix) {
     el.textContent = signed(v) + (suffix || '');
     el.classList.toggle('down', v < 0);
@@ -282,19 +316,20 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   var cutoff30 = last.t - 30 * DAY;
   var win30 = ALL.filter(function (p) { return p.t >= cutoff30; });
 
-  document.getElementById('r-now').innerHTML = last.w.toFixed(1) + '<span class="unit">lbs</span>';
+  document.getElementById('r-now').innerHTML =
+    fmtVal(last.w) + (CFG.unit ? '<span class="unit">' + CFG.unit + '</span>' : '');
   document.getElementById('r-when').textContent = fmtDate(last.t);
   setDelta(document.getElementById('r-since'), last.w - first.w);
   setDelta(document.getElementById('r-30'), win30.length > 1 ? last.w - win30[0].w : 0);
   setDelta(document.getElementById('r-peak'), last.w - highest.w);
 
-  document.getElementById('s-start').textContent = first.w.toFixed(1);
+  document.getElementById('s-start').textContent = fmtVal(first.w);
   document.getElementById('s-start-d').textContent = fmtDate(first.t);
-  document.getElementById('s-low').textContent = lowest.w.toFixed(1);
+  document.getElementById('s-low').textContent = fmtVal(lowest.w);
   document.getElementById('s-low-d').textContent = fmtDate(lowest.t);
-  document.getElementById('s-high').textContent = highest.w.toFixed(1);
+  document.getElementById('s-high').textContent = fmtVal(highest.w);
   document.getElementById('s-high-d').textContent = fmtDate(highest.t);
-  document.getElementById('s-avg').textContent = avg.toFixed(1);
+  document.getElementById('s-avg').textContent = fmtVal(avg);
   document.getElementById('s-n').textContent = ALL.length;
   document.getElementById('s-span').textContent = fmtShort(first.t) + ' \u2013 ' + fmtShort(last.t);
   document.getElementById('f-count').textContent = ALL.length;
@@ -350,10 +385,14 @@ footer.foot b { color: var(--ink); font-weight: 600; }
     var hi = Math.max.apply(null, view.map(function (p) { return p.w; }));
     var pad = Math.max((hi - lo) * 0.12, 1.2);
     var yMin = lo - pad, yMax = hi + pad;
+    var flip = !!CFG.invert;  /* earlier at the bottom for a clock axis */
     var t0 = view[0].t, t1 = view[view.length - 1].t || t0 + DAY;
 
     function X(t) { return padL + (t1 === t0 ? 0 : (t - t0) / (t1 - t0)) * iw; }
-    function Y(v) { return padT + (1 - (v - yMin) / (yMax - yMin)) * ih; }
+    function Y(v) {
+      var f = (v - yMin) / (yMax - yMin);
+      return padT + (flip ? f : 1 - f) * ih;
+    }
     geo = { X: X, Y: Y, padL: padL, iw: iw, t0: t0, t1: t1 };
 
     /* y grid */
@@ -363,7 +402,7 @@ footer.foot b { color: var(--ink); font-weight: 600; }
       var y = Y(v);
       ctx.strokeStyle = cGrid; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(padL, Math.round(y) + 0.5); ctx.lineTo(w - padR, Math.round(y) + 0.5); ctx.stroke();
-      ctx.fillStyle = cMut; ctx.fillText(v.toFixed(0), padL - 9, y);
+      ctx.fillStyle = cMut; ctx.fillText((CFG.format === 'time' ? fmtVal(v) : v.toFixed(0)), padL - 9, y);
     });
 
     /* x labels */
@@ -434,8 +473,9 @@ footer.foot b { color: var(--ink); font-weight: 600; }
     if (i < 0) return;
     hoverIdx = i; draw();
     var p = view[i];
-    tip.innerHTML = '<span class="tw">' + p.w.toFixed(1) + ' lbs</span><br>' + fmtDate(p.t) +
-      '<br><span class="tt">avg ' + avgLine[i].toFixed(1) + '</span>';
+    tip.innerHTML = '<span class="tw">' + fmtVal(p.w) +
+      (CFG.unit ? ' ' + CFG.unit : '') + '</span><br>' + fmtDate(p.t) +
+      '<br><span class="tt">avg ' + fmtVal(avgLine[i]) + '</span>';
     tip.classList.add('on');
     var host = cv.parentElement.getBoundingClientRect();
     var px = geo.X(p.t), py = geo.Y(p.w);
@@ -494,7 +534,7 @@ footer.foot b { color: var(--ink); font-weight: 600; }
         return res.json();
       })
       .then(function (data) {
-        if (!data.length) throw new Error('no weigh-ins returned');
+        if (!data.length) throw new Error('no data returned');
         ALL = data;
         start();
       })
