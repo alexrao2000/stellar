@@ -1,8 +1,7 @@
-.PHONY: sync reauth dev dashboard install-scheduler probe-calendar import-takeout migrate-supabase keepalive restore-task help
+.PHONY: sync reauth dev install-scheduler probe-calendar import-takeout migrate-supabase keepalive restore-task help
 
 VENV := .venv/bin
 PYTHON := $(VENV)/python
-STREAMLIT := $(VENV)/streamlit
 
 help:
 	@echo "Targets:"
@@ -11,10 +10,9 @@ help:
 	@echo "  make probe-calendar          Inspect how recurring tasks appear in Calendar"
 	@echo "  make import-takeout FILE=... Backfill full history from a Google Takeout export"
 	@echo "  make migrate-supabase        Copy local SQLite data into Supabase"
-	@echo "  make dev                     Run the app locally (calendar + weight, reads Supabase)"
+	@echo "  make dev                     Run the app: check-in, calendar, charts, data"
 	@echo "  make keepalive               Ping Supabase so the free project stays active"
 	@echo "  make restore-task ARGS=...   Un-delete / re-date a Google Task in place"
-	@echo "  make dashboard               Launch Streamlit charts"
 	@echo "  make install-scheduler       Install local launchd sync job (optional)"
 
 sync:
@@ -45,9 +43,6 @@ restore-task:
 dev:
 	$(PYTHON) -m uvicorn src.server:app --port 8000 --reload \
 	  --reload-dir src --reload-dir scripts/templates --reload-include '*.html'
-
-dashboard:
-	$(STREAMLIT) run dashboard/app.py
 
 install-scheduler:
 	bash scheduler/install.sh

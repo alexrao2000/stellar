@@ -455,6 +455,13 @@ def page_wake() -> str:
     })
 
 
+@app.get("/consistency", response_class=HTMLResponse)
+def page_consistency() -> str:
+    return _render("consistency.html", {
+        "mode": "live", "endpoint": "/api/task_history", "headers": {}, "paged": False,
+    })
+
+
 @app.get("/data", response_class=HTMLResponse)
 def page_data() -> str:
     return _render("data_table.html", {

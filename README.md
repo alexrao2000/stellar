@@ -14,7 +14,7 @@ your **wake-up time** and **weight** over time. Runs on a schedule so the data s
 - Buckets each task to a day (by due/scheduled date), so a task you finish after midnight
   still counts for the day it was due (handles your nightly-update spillover).
 - Idempotent upserts, so it can run as often as you like (default: hourly).
-- A Streamlit dashboard charts wake-up time and weight.
+- A local app (`make dev`) for the daily check-in, plus calendar, charts and a data table.
 
 ## Data sources (important)
 
@@ -35,7 +35,7 @@ new days automatically.
 
 ```
 Google Takeout (one-time backfill) --\
-                                      >--> parsers --> store (SQLite or Supabase) --> Streamlit dashboard
+                                      >--> parsers --> store (SQLite or Supabase) --> local app (make dev)
 Google Tasks API (hourly, ongoing) --/
         ^
    launchd (hourly)
@@ -99,10 +99,10 @@ make import-takeout FILE=/path/to/takeout-XXXX.zip
 
 This loads every historical wake-up time, weight, and per-day completion into the same tables.
 
-### 5. Dashboard
+### 5. Run the app
 
 ```bash
-make dashboard
+make dev     # http://localhost:8000
 ```
 
 ### 6. Schedule it
@@ -165,7 +165,6 @@ make import-takeout FILE=take.zip  # Backfill full history from a Takeout export
 make migrate-supabase              # Copy local SQLite data into Supabase
 make keepalive                     # Ping Supabase so the free project stays active
 make restore-task ARGS="..."       # Un-delete / re-date a Google Task in place
-make dashboard                     # Launch Streamlit charts
 make install-scheduler             # Install local launchd job (optional)
 make help                          # List targets
 ```
