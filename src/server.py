@@ -355,10 +355,12 @@ _BOOT_GATE_JS = """<script>
 
   function settle() {
     if (--inflight > 0) return;
-    /* Pages chain a second request off the first -- /today posts the day into
-       existence before reading it back. Waiting a beat spans that gap, so the
-       page is not revealed half-filled and then finished off in view. */
-    quiet = setTimeout(reveal, 140);
+    /* /today posts the day into existence before reading it back, and must not
+       be revealed in between. The measured gap between those two is 1ms; 40
+       leaves two orders of magnitude of headroom and still costs a hundred
+       less than the 140 this started at, which had become the largest single
+       component of a fast load. */
+    quiet = setTimeout(reveal, 40);
   }
 
   window.fetch = function () {
@@ -433,10 +435,15 @@ def _render(template: str, boot: dict, active: str = "") -> str:
     html = path.read_text(encoding="utf-8").replace(
         "__BOOTSTRAP__", json.dumps(boot, separators=(",", ":"))
     )
+    # A page whose data is already in the markup has nothing to wait for, and
+    # gating it would be strictly worse than not: the gate lifts on the first
+    # quiet network, and with no request to wait on that is a timer rather than
+    # an event. Such a page paints complete on the first frame.
+    gate = "" if boot.get("mode") == "inline" else _BOOT_GATE_JS
     # Injected here rather than in each template: every page goes through this
     # one function, so there is no way to add a view and forget the icon or the
     # nav, or to leave one page's copy of the link list behind when it changes.
-    return _FAVICON_LINK + _NAV_CSS + _nav(active) + _BOOT_GATE_JS + html
+    return _FAVICON_LINK + _NAV_CSS + _nav(active) + gate + html
 
 
 # --------------------------------------------------------------------------- #
@@ -755,9 +762,8 @@ def page_today(day: str | None = None) -> str:
 
 @app.get("/calendar", response_class=HTMLResponse)
 def page_calendar() -> str:
-    # Same-origin, no credentials, whole set in one response.
     return _render("calendar_view.html", {
-        "mode": "live", "endpoint": "/api/task_history", "headers": {}, "paged": False,
+        "mode": "inline", "data": _task_history(),
     }, active="/calendar")
 
 
@@ -798,30 +804,28 @@ WAKE_CFG = {
 @app.get("/weight", response_class=HTMLResponse)
 def page_weight() -> str:
     return _render("series_chart.html", {
-        "mode": "live", "endpoint": "/api/weights", "headers": {}, "paged": False,
-        "cfg": WEIGHT_CFG,
+        "mode": "inline", "data": api_weights(), "cfg": WEIGHT_CFG,
     }, active="/weight")
 
 
 @app.get("/wake", response_class=HTMLResponse)
 def page_wake() -> str:
     return _render("series_chart.html", {
-        "mode": "live", "endpoint": "/api/wake", "headers": {}, "paged": False,
-        "cfg": WAKE_CFG,
+        "mode": "inline", "data": api_wake(), "cfg": WAKE_CFG,
     }, active="/wake")
 
 
 @app.get("/consistency", response_class=HTMLResponse)
 def page_consistency() -> str:
     return _render("consistency.html", {
-        "mode": "live", "endpoint": "/api/task_history", "headers": {}, "paged": False,
+        "mode": "inline", "data": _task_history(),
     }, active="/consistency")
 
 
 @app.get("/data", response_class=HTMLResponse)
 def page_data() -> str:
     return _render("data_table.html", {
-        "mode": "live", "endpoint": "/api/task_history", "headers": {}, "paged": False,
+        "mode": "inline", "data": _task_history(),
     }, active="/data")
 
 

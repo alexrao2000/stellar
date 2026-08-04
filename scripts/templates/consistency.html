@@ -340,8 +340,13 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   document.getElementById('minocc').addEventListener('input', ranking);
   document.getElementById('task').addEventListener('change', detail);
 
-  fetch(BOOT.endpoint, { headers: BOOT.headers || {} })
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  /* Inline: the server already had the rows and embedded them, so there is no
+     second round trip and nothing to show a loading state for. Live: fetch.
+     Both paths reach the same handler. */
+  (BOOT.mode === 'live'
+    ? fetch(BOOT.endpoint, { headers: BOOT.headers || {} })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    : Promise.resolve(BOOT.data))
     .then(function (data) {
       /* Daily only. One-off tasks from other lists have no meaningful rate. */
       ROWS = data.filter(function (r) { return r.list_title === 'Daily'; });
