@@ -13,7 +13,6 @@ Run:  make dev        (or: uvicorn src.server:app --reload --port 8000)
 from __future__ import annotations
 
 import logging
-import math
 import re
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -245,88 +244,125 @@ html body { padding-left: var(--nav-w); }
 }
 @media print { .sidenav { display: none; } html body { padding-left: 0; } }
 
-/* Centred in the content area, not the window -- `left: var(--nav-w)` is what
-   keeps it off the sidebar. No backdrop: the page fills in behind it. */
-.app-loading {
-  position: fixed; top: 0; right: 0; bottom: 0; left: var(--nav-w);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 30; pointer-events: none;
-  transition: opacity .22s ease;
+/* Hold the real content back until its data is in and stand a skeleton in its
+   place, so nothing is ever on screen showing an empty count or a blank stat.
+   The sidebar is exempt -- it needs no data, so the frame is up immediately.
+
+   `visibility`, not `display`. The weight chart measures its container and
+   draws nothing at zero size, which is exactly what `display: none` would
+   hand it -- hidden layout is still laid out. */
+html.app-booting body > *:not(.sidenav):not(.app-skeleton) { visibility: hidden; }
+html:not(.app-booting) .app-skeleton { display: none; }
+
+/* Pinned to the content area rather than placed in the flow. Hidden content is
+   still laid out, so a skeleton appended after it starts one full page-height
+   down -- off screen on any page with a long table. Its inner box copies the
+   page's own .wrap at runtime, so it lands where the real content will rather
+   than approximating it. */
+.app-skeleton {
+  position: fixed; top: 0; left: var(--nav-w); right: 0; bottom: 0;
+  overflow: hidden; box-sizing: border-box; z-index: 10;
 }
-.app-loading[hidden] { display: none; }
-.app-loading.gone { opacity: 0; }
-.app-spinner {
-  width: 38px; height: 38px; fill: var(--nav-accent);
-  animation: app-spin .8s linear infinite;
+.app-skeleton .sk-inner { margin: 0 auto; box-sizing: border-box; }
+@media (max-width: 760px) { .app-skeleton { left: 0; } }
+/* Mixed from --ink rather than set to --surface-2: that variable is only a
+   shade off --bg in the light theme, and the bars all but vanished. */
+.app-skeleton .sk {
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  border-radius: 8px; position: relative; overflow: hidden;
 }
-@keyframes app-spin { to { transform: rotate(360deg); } }
-@media (max-width: 760px) { .app-loading { left: 0; } }
-/* Slowed rather than stopped -- a still spinner says nothing is happening. */
-@media (prefers-reduced-motion: reduce) { .app-spinner { animation-duration: 2.4s; } }
+/* --surface sits above --bg in both themes, so the sweep lightens either way. */
+.app-skeleton .sk::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent,
+    color-mix(in srgb, var(--surface) 70%, transparent), transparent);
+  animation: sk-shimmer 1.25s ease-in-out infinite;
+}
+@keyframes sk-shimmer { to { transform: translateX(100%); } }
+.app-skeleton .sk-eyebrow { height: 9px;  width: 92px;  margin-bottom: 12px; }
+.app-skeleton .sk-title   { height: 27px; width: 210px; margin-bottom: 11px; }
+.app-skeleton .sk-sub     { height: 12px; width: 320px; max-width: 80%; margin-bottom: 24px; }
+.app-skeleton .sk-card    { height: 116px; margin-bottom: 14px; }
+.app-skeleton .sk-card-tall { height: 300px; }
+/* A shimmer that cannot be turned off is worse than none. */
+@media (prefers-reduced-motion: reduce) { .app-skeleton .sk::after { animation: none; } }
 </style>"""
 
 
-def _tapered_arc(
-    sweep: float = 285.0,
-    radius: float = 17.0,
-    tail: float = 3.4,
-    tip: float = 0.35,
-    steps: int = 72,
-    centre: float = 22.0,
-) -> str:
-    """SVG path for an arc that thins along its length.
-
-    A stroked arc cannot do this -- stroke-width is one number for the whole
-    path -- so the shape is a filled outline instead: out along a constant
-    radius, back along one that closes on it, leaving the tip nearly a point.
-    """
-    outer, inner = [], []
-    for i in range(steps + 1):
-        t = i / steps
-        angle = math.radians(-90.0 + sweep * t)
-        width = tail + (tip - tail) * t
-        cos_a, sin_a = math.cos(angle), math.sin(angle)
-        outer.append((centre + radius * cos_a, centre + radius * sin_a))
-        inner.append((centre + (radius - width) * cos_a, centre + (radius - width) * sin_a))
-    points = outer + inner[::-1]
-    return "M" + " L".join(f"{x:.2f},{y:.2f}" for x, y in points) + " Z"
-
-
-_SPINNER_HTML = (
-    '<div class="app-loading" id="app-loading" role="status" aria-label="Loading">'
-    '<svg class="app-spinner" viewBox="0 0 44 44" aria-hidden="true">'
-    f'<path d="{_tapered_arc()}"/></svg></div>'
-)
-
 # Wrapping fetch beats wiring five templates by hand -- the same reason the nav
-# moved here. It also means a page added later is covered without doing
-# anything. Only the opening burst is tracked: once the network first falls
-# quiet the overlay is retired for good, so the write that a checkbox tap makes
-# never puts a spinner back on screen.
-_SPINNER_JS = """<script>
+# moved here, and it covers a page added later without anyone remembering to.
+#
+# The class is set from script rather than shipped in the markup on purpose: if
+# scripting is off or this throws, nothing is ever hidden. Failing to a visible
+# page beats failing to a blank one.
+_BOOT_GATE_JS = """<script>
 (function () {
-  var el = document.getElementById('app-loading');
-  if (!el || !window.fetch) { if (el) el.hidden = true; return; }
-  var inflight = 0, started = false, finished = false, quiet, giveup;
+  var root = document.documentElement;
+  if (!window.fetch) return;                 // no gate we could reliably lift
+  root.classList.add('app-booting');
 
-  function finish() {
-    if (finished) return;
-    finished = true;
+  var inflight = 0, started = false, done = false, quiet, giveup;
+  var real = window.fetch;
+
+  function reveal() {
+    if (done) return;
+    done = true;
     clearTimeout(quiet); clearTimeout(giveup);
     window.fetch = real;
-    el.classList.add('gone');
-    setTimeout(function () { el.hidden = true; }, 260);
+    root.classList.remove('app-booting');
+    var sk = document.querySelector('.app-skeleton');
+    if (sk) sk.parentNode.removeChild(sk);
+  }
+
+  /* Built here rather than shipped in the markup because it copies its box
+     from the page's own .wrap -- same max-width, same padding, same centring
+     -- so it occupies exactly the space the real content is about to. */
+  function skeleton() {
+    if (done || document.querySelector('.app-skeleton')) return;
+    var host = document.querySelector('.wrap');
+    var cs = host ? getComputedStyle(host) : null;
+    var inner = document.createElement('div');
+    inner.className = 'sk-inner';
+    inner.style.maxWidth = cs && cs.maxWidth !== 'none' ? cs.maxWidth : '1100px';
+    inner.style.paddingTop = cs ? cs.paddingTop : '28px';
+    inner.style.paddingLeft = cs ? cs.paddingLeft : '18px';
+    inner.style.paddingRight = cs ? cs.paddingRight : '18px';
+    inner.innerHTML =
+      '<div class="sk sk-eyebrow"></div>' +
+      '<div class="sk sk-title"></div>' +
+      '<div class="sk sk-sub"></div>' +
+      '<div class="sk sk-card"></div>' +
+      '<div class="sk sk-card sk-card-tall"></div>';
+
+    var el = document.createElement('div');
+    el.className = 'app-skeleton';
+    el.setAttribute('aria-hidden', 'true');
+    /* Below 760px the nav is a strip across the top rather than a column, so
+       start beneath it instead of underneath it. Measured, not guessed. */
+    var nav = document.querySelector('.sidenav');
+    if (nav && getComputedStyle(nav).position !== 'fixed') {
+      el.style.top = Math.round(nav.getBoundingClientRect().height) + 'px';
+    }
+    el.appendChild(inner);
+    document.body.appendChild(el);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', skeleton);
+  } else {
+    skeleton();
   }
 
   function settle() {
     if (--inflight > 0) return;
-    /* Pages chain a second request off the first -- /today posts the day into
-       existence before reading it back. Waiting a beat keeps the wheel up
-       across that gap instead of flickering off between the two. */
-    quiet = setTimeout(finish, 140);
+    /* /today posts the day into existence before reading it back, and must not
+       be revealed in between. The measured gap between those two is 1ms; 40
+       leaves two orders of magnitude of headroom and still costs a hundred
+       less than the 140 this started at, which had become the largest single
+       component of a fast load. */
+    quiet = setTimeout(reveal, 40);
   }
 
-  var real = window.fetch;
   window.fetch = function () {
     started = true;
     inflight++;
@@ -337,11 +373,15 @@ _SPINNER_JS = """<script>
     );
   };
 
-  /* A page that never fetches, or one whose request hangs, must not be left
-     under a spinner forever. */
-  giveup = setTimeout(finish, 15000);
+  /* Only the opening burst gates the page. Once revealed the wrapper takes
+     itself off, so the write behind a checkbox tap can never blank the view --
+     that interaction was made instant deliberately.
+
+     Both of these are the reason a page cannot get stuck invisible: one for a
+     page that never fetches, one for a request that hangs. */
+  giveup = setTimeout(reveal, 10000);
   window.addEventListener('load', function () {
-    setTimeout(function () { if (!started) finish(); }, 400);
+    setTimeout(function () { if (!started) reveal(); }, 300);
   });
 })();
 </script>"""
@@ -382,7 +422,7 @@ def swagger_docs() -> HTMLResponse:
     if "<body>" not in page:  # pragma: no cover - guards a FastAPI upgrade
         log.warning("swagger html shape changed; serving /docs without the nav")
         return HTMLResponse(page)
-    shell = _NAV_CSS + _nav("/docs") + _SPINNER_HTML + _SPINNER_JS
+    shell = _NAV_CSS + _nav("/docs") + _BOOT_GATE_JS
     return HTMLResponse(page.replace("<body>", "<body>" + shell, 1))
 
 
@@ -395,10 +435,15 @@ def _render(template: str, boot: dict, active: str = "") -> str:
     html = path.read_text(encoding="utf-8").replace(
         "__BOOTSTRAP__", json.dumps(boot, separators=(",", ":"))
     )
+    # A page whose data is already in the markup has nothing to wait for, and
+    # gating it would be strictly worse than not: the gate lifts on the first
+    # quiet network, and with no request to wait on that is a timer rather than
+    # an event. Such a page paints complete on the first frame.
+    gate = "" if boot.get("mode") == "inline" else _BOOT_GATE_JS
     # Injected here rather than in each template: every page goes through this
     # one function, so there is no way to add a view and forget the icon or the
     # nav, or to leave one page's copy of the link list behind when it changes.
-    return _FAVICON_LINK + _NAV_CSS + _nav(active) + _SPINNER_HTML + _SPINNER_JS + html
+    return _FAVICON_LINK + _NAV_CSS + _nav(active) + gate + html
 
 
 # --------------------------------------------------------------------------- #
@@ -717,9 +762,8 @@ def page_today(day: str | None = None) -> str:
 
 @app.get("/calendar", response_class=HTMLResponse)
 def page_calendar() -> str:
-    # Same-origin, no credentials, whole set in one response.
     return _render("calendar_view.html", {
-        "mode": "live", "endpoint": "/api/task_history", "headers": {}, "paged": False,
+        "mode": "inline", "data": _task_history(),
     }, active="/calendar")
 
 
@@ -760,30 +804,28 @@ WAKE_CFG = {
 @app.get("/weight", response_class=HTMLResponse)
 def page_weight() -> str:
     return _render("series_chart.html", {
-        "mode": "live", "endpoint": "/api/weights", "headers": {}, "paged": False,
-        "cfg": WEIGHT_CFG,
+        "mode": "inline", "data": api_weights(), "cfg": WEIGHT_CFG,
     }, active="/weight")
 
 
 @app.get("/wake", response_class=HTMLResponse)
 def page_wake() -> str:
     return _render("series_chart.html", {
-        "mode": "live", "endpoint": "/api/wake", "headers": {}, "paged": False,
-        "cfg": WAKE_CFG,
+        "mode": "inline", "data": api_wake(), "cfg": WAKE_CFG,
     }, active="/wake")
 
 
 @app.get("/consistency", response_class=HTMLResponse)
 def page_consistency() -> str:
     return _render("consistency.html", {
-        "mode": "live", "endpoint": "/api/task_history", "headers": {}, "paged": False,
+        "mode": "inline", "data": _task_history(),
     }, active="/consistency")
 
 
 @app.get("/data", response_class=HTMLResponse)
 def page_data() -> str:
     return _render("data_table.html", {
-        "mode": "live", "endpoint": "/api/task_history", "headers": {}, "paged": False,
+        "mode": "inline", "data": _task_history(),
     }, active="/data")
 
 

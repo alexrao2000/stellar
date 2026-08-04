@@ -219,11 +219,16 @@ td.notes { white-space: pre-wrap; max-width: 420px; font-size: .78rem;
     page = Math.ceil(view.length / size()) - 1; render();
   });
 
-  fetch(BOOT.endpoint, { headers: BOOT.headers || {} })
-    .then(function (r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    })
+  /* Inline: the server already had the rows and embedded them, so there is no
+     second round trip and nothing to show a loading state for. Live: fetch.
+     Both paths reach the same handler. */
+  (BOOT.mode === 'live'
+    ? fetch(BOOT.endpoint, { headers: BOOT.headers || {} })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+    : Promise.resolve(BOOT.data))
     .then(function (data) {
       /* Newest first: the rows you just recorded are the ones you want to see. */
       ALL = data.slice().sort(function (a, b) {

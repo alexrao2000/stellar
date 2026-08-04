@@ -532,7 +532,12 @@ footer.foot b { color: var(--ink); font-weight: 600; }
       })
       .catch(function (err) { fail(err && err.message ? err.message : String(err)); });
   } else {
-    boot(BOOT.data);
+    /* Two inline shapes. The old build-time snapshot arrived already interned
+       as {titles, notes, lists, rows}; the server embeds plain records. Shape
+       the plain ones here so both reach boot() in the form it expects --
+       passing records straight in left TITLES and ROWS undefined and the board
+       silently blank. */
+    boot(Array.isArray(BOOT.data) ? shapeRows(BOOT.data) : BOOT.data);
   }
 })();
 </script>
