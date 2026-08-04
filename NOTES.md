@@ -68,6 +68,36 @@ occurrence existed when the overwrite ran. The surviving signals are:
 1. **completion status** — did a weigh-in happen at all
 2. **presence of a `weight_log` row** — did the real value survive anywhere
 
+## Never edit Google Tasks directly
+
+**Rule: no direct writes to Google Tasks. Anything that touches it goes through
+a wrapper with a dry run, and the dry run is reviewed before it is applied.**
+
+Alex's assessment, recorded as his: the overwrite was most likely caused by the
+assistant, and a **second overwrite happened around 2026-07-31**, which he is
+confident he did not perform.
+
+What can be established:
+
+- The assistant did write to Google on Jul 30-31 -- 17 task creations and 17
+  deletions, visible as timestamp clusters at `2026-07-31T00:45` and
+  `00:51`. These were characterised at the time as safe additive operations.
+  That characterisation was never verified and cannot be.
+- **The API cannot diagnose this.** It cannot enumerate historical occurrences,
+  so there is no way to compare descriptions across a series before and after a
+  write. "No evidence found" from a tool that structurally cannot see the
+  evidence means nothing, and should not be offered as a defence.
+- A write intended for one occurrence propagates to the entire series. There is
+  no way to preview that through the API, and no way to undo it.
+
+Why the rule follows regardless of cause: the blast radius of a Google Tasks
+write is the whole recurring series, it is silent, and it is irreversible. That
+is true whoever triggers it. The cost of a dry run is seconds; the cost of being
+wrong is what the rest of this file documents.
+
+The app writes to Supabase `task_history` instead, which is diffable,
+row-addressed, and recoverable.
+
 ## `weight_log` is the source of truth
 
 Supabase `weight_log` is a snapshot of the original Google Tasks data taken
