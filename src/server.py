@@ -19,6 +19,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse
 
 from .config import load_config
@@ -35,12 +36,39 @@ CURRENT_WEIGHT_CLAUSE = re.compile(
     r"current\s*weight\s*:\s*[\d.]*\s*(?:lbs?)?", re.IGNORECASE
 )
 
-# Reading the full table takes a few seconds and it changes rarely, so hold it
-# briefly rather than re-fetching on every navigation. POST /api/refresh clears.
-CACHE_TTL = 120.0
+# A full read is ~1.8 MB over seven sequential round trips, about two seconds.
+# Writes are folded into the cache rather than dropping it, so it stays correct
+# between refreshes and can be held far longer than the original two minutes.
+# POST /api/refresh forces a re-read.
+CACHE_TTL = 900.0
 _cache: dict[str, tuple[float, object]] = {}
 
 app = FastAPI(title="task-tracker", docs_url="/docs")
+
+# The history payload is ~1.8 MB of highly repetitive JSON. Compressed it is a
+# fraction of that, which is most of the cold-load cost on any connection
+# slower than localhost.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+@app.on_event("startup")
+def _warm_cache() -> None:
+    """Pull the history in the background as soon as the server comes up.
+
+    Otherwise the first page load after `make dev` pays the full read. Done on a
+    thread so startup is not blocked, and failures are logged rather than raised
+    -- an unreachable database should not stop the server booting, since the
+    error pages explain the problem better than a crash does.
+    """
+    import threading
+
+    def go():
+        try:
+            _task_history()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("cache warm failed (%s); first request will be slower", exc)
+
+    threading.Thread(target=go, daemon=True).start()
 
 
 def _cached(key: str, build):
@@ -60,23 +88,52 @@ HISTORY_COLS = (
 )
 
 
+def _shape(r: dict) -> dict:
+    """One database row in the shape the pages consume."""
+    rec = {c: r.get(c) for c in HISTORY_COLS}
+    rec["day"] = str(rec["day"] or "")[:10]
+    rec["is_completed"] = bool(r.get("is_completed"))
+    # numeric comes back as a string from PostgREST
+    for numeric in ("weight_lbs", "takeout_weight"):
+        v = rec[numeric]
+        rec[numeric] = None if v is None or v == "" else float(v)
+    return rec
+
+
 def _task_history() -> list[dict]:
     def build():
-        rows = read_rows(load_config(), "task_history")
-        out = []
-        for r in rows:
-            rec = {c: r.get(c) for c in HISTORY_COLS}
-            rec["day"] = str(rec["day"] or "")[:10]
-            rec["is_completed"] = bool(r.get("is_completed"))
-            # numeric comes back as a string from PostgREST
-            for numeric in ("weight_lbs", "takeout_weight"):
-                v = rec[numeric]
-                rec[numeric] = None if v is None or v == "" else float(v)
-            out.append(rec)
-        out.sort(key=lambda r: (r["day"], r["title"]))
-        return out
+        rows = [_shape(r) for r in read_rows(load_config(), "task_history")]
+        rows.sort(key=lambda r: (r["day"], r["title"]))
+        return rows
 
     return _cached("task_history", build)
+
+
+def _cache_apply(changed: list[dict]) -> None:
+    """Fold a write into the cached history rather than dropping the cache.
+
+    Clearing meant a single checkbox tap cost a full 6,221-row refetch on the
+    next page load -- about two seconds, on every interaction. The rows a write
+    touches are known, so patch those and leave the rest alone. The cache
+    timestamp is preserved so this does not extend the TTL indefinitely.
+    """
+    hit = _cache.get("task_history")
+    if not hit:
+        return
+    ts, rows = hit
+    index = {r["id"]: i for i, r in enumerate(rows) if r.get("id") is not None}
+    dirty = False
+    for raw in changed:
+        rec = _shape(raw)
+        pos = index.get(rec["id"])
+        if pos is None:
+            rows.append(rec)
+        else:
+            rows[pos] = rec
+        dirty = True
+    if dirty:
+        rows.sort(key=lambda r: (r["day"], r["title"]))
+        _cache["task_history"] = (ts, rows)
 
 
 def _render(template: str, boot: dict) -> str:
@@ -135,7 +192,11 @@ def api_wake() -> list[dict]:
 
 @app.post("/api/refresh")
 def api_refresh() -> dict:
-    """Drop the cache so the next read hits Supabase."""
+    """Drop the cache so the next read hits Supabase.
+
+    Writes patch the cache in place rather than clearing it; this is the escape
+    hatch for when the database changed underneath us.
+    """
     _cache.clear()
     return {"ok": True}
 
@@ -224,7 +285,7 @@ def api_ensure_day(day: str) -> dict:
         and (not d.get("ends_on") or d["ends_on"] >= day)
     ]
     if wanted:
-        client.table("task_history").insert([
+        created = client.table("task_history").insert([
             {
                 "day": day,
                 "list_title": d["list_title"],
@@ -234,7 +295,7 @@ def api_ensure_day(day: str) -> dict:
             }
             for d in wanted
         ]).execute()
-        _cache.clear()
+        _cache_apply(created.data or [])
     return {"day": day, "created": [d["title"] for d in wanted],
             "already_present": len(existing)}
 
@@ -297,7 +358,7 @@ def api_toggle(task_id: int, done: bool) -> dict:
     }).eq("id", task_id).execute()
     if not res.data:
         raise HTTPException(404, f"no task_history row with id {task_id}")
-    _cache.clear()
+    _cache_apply(res.data)
     return res.data[0]
 
 
@@ -329,7 +390,7 @@ def api_set_weight(day: str, lbs: float) -> dict:
         "status": "completed",
         "completed_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", row["id"]).execute()
-    _cache.clear()
+    _cache_apply(res.data)
     return res.data[0]
 
 
@@ -356,7 +417,7 @@ def api_set_wake(day: str, time: str) -> dict:
         "status": "completed",
         "completed_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", row["id"]).execute()
-    _cache.clear()
+    _cache_apply(res.data)
     return res.data[0]
 
 
