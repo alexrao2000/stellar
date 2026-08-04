@@ -13,6 +13,7 @@ Run:  make dev        (or: uvicorn src.server:app --reload --port 8000)
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -243,7 +244,107 @@ html body { padding-left: var(--nav-w); }
   .sidenav a.here { border-left-color: transparent; border-bottom-color: var(--nav-accent); }
 }
 @media print { .sidenav { display: none; } html body { padding-left: 0; } }
+
+/* Centred in the content area, not the window -- `left: var(--nav-w)` is what
+   keeps it off the sidebar. No backdrop: the page fills in behind it. */
+.app-loading {
+  position: fixed; top: 0; right: 0; bottom: 0; left: var(--nav-w);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 30; pointer-events: none;
+  transition: opacity .22s ease;
+}
+.app-loading[hidden] { display: none; }
+.app-loading.gone { opacity: 0; }
+.app-spinner {
+  width: 38px; height: 38px; fill: var(--nav-accent);
+  animation: app-spin .8s linear infinite;
+}
+@keyframes app-spin { to { transform: rotate(360deg); } }
+@media (max-width: 760px) { .app-loading { left: 0; } }
+/* Slowed rather than stopped -- a still spinner says nothing is happening. */
+@media (prefers-reduced-motion: reduce) { .app-spinner { animation-duration: 2.4s; } }
 </style>"""
+
+
+def _tapered_arc(
+    sweep: float = 285.0,
+    radius: float = 17.0,
+    tail: float = 3.4,
+    tip: float = 0.35,
+    steps: int = 72,
+    centre: float = 22.0,
+) -> str:
+    """SVG path for an arc that thins along its length.
+
+    A stroked arc cannot do this -- stroke-width is one number for the whole
+    path -- so the shape is a filled outline instead: out along a constant
+    radius, back along one that closes on it, leaving the tip nearly a point.
+    """
+    outer, inner = [], []
+    for i in range(steps + 1):
+        t = i / steps
+        angle = math.radians(-90.0 + sweep * t)
+        width = tail + (tip - tail) * t
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        outer.append((centre + radius * cos_a, centre + radius * sin_a))
+        inner.append((centre + (radius - width) * cos_a, centre + (radius - width) * sin_a))
+    points = outer + inner[::-1]
+    return "M" + " L".join(f"{x:.2f},{y:.2f}" for x, y in points) + " Z"
+
+
+_SPINNER_HTML = (
+    '<div class="app-loading" id="app-loading" role="status" aria-label="Loading">'
+    '<svg class="app-spinner" viewBox="0 0 44 44" aria-hidden="true">'
+    f'<path d="{_tapered_arc()}"/></svg></div>'
+)
+
+# Wrapping fetch beats wiring five templates by hand -- the same reason the nav
+# moved here. It also means a page added later is covered without doing
+# anything. Only the opening burst is tracked: once the network first falls
+# quiet the overlay is retired for good, so the write that a checkbox tap makes
+# never puts a spinner back on screen.
+_SPINNER_JS = """<script>
+(function () {
+  var el = document.getElementById('app-loading');
+  if (!el || !window.fetch) { if (el) el.hidden = true; return; }
+  var inflight = 0, started = false, finished = false, quiet, giveup;
+
+  function finish() {
+    if (finished) return;
+    finished = true;
+    clearTimeout(quiet); clearTimeout(giveup);
+    window.fetch = real;
+    el.classList.add('gone');
+    setTimeout(function () { el.hidden = true; }, 260);
+  }
+
+  function settle() {
+    if (--inflight > 0) return;
+    /* Pages chain a second request off the first -- /today posts the day into
+       existence before reading it back. Waiting a beat keeps the wheel up
+       across that gap instead of flickering off between the two. */
+    quiet = setTimeout(finish, 140);
+  }
+
+  var real = window.fetch;
+  window.fetch = function () {
+    started = true;
+    inflight++;
+    clearTimeout(quiet);
+    return real.apply(this, arguments).then(
+      function (r) { settle(); return r; },
+      function (e) { settle(); throw e; }
+    );
+  };
+
+  /* A page that never fetches, or one whose request hangs, must not be left
+     under a spinner forever. */
+  giveup = setTimeout(finish, 15000);
+  window.addEventListener('load', function () {
+    setTimeout(function () { if (!started) finish(); }, 400);
+  });
+})();
+</script>"""
 
 
 def _nav(active: str) -> str:
@@ -281,7 +382,8 @@ def swagger_docs() -> HTMLResponse:
     if "<body>" not in page:  # pragma: no cover - guards a FastAPI upgrade
         log.warning("swagger html shape changed; serving /docs without the nav")
         return HTMLResponse(page)
-    return HTMLResponse(page.replace("<body>", "<body>" + _NAV_CSS + _nav("/docs"), 1))
+    shell = _NAV_CSS + _nav("/docs") + _SPINNER_HTML + _SPINNER_JS
+    return HTMLResponse(page.replace("<body>", "<body>" + shell, 1))
 
 
 def _render(template: str, boot: dict, active: str = "") -> str:
@@ -296,7 +398,7 @@ def _render(template: str, boot: dict, active: str = "") -> str:
     # Injected here rather than in each template: every page goes through this
     # one function, so there is no way to add a view and forget the icon or the
     # nav, or to leave one page's copy of the link list behind when it changes.
-    return _FAVICON_LINK + _NAV_CSS + _nav(active) + html
+    return _FAVICON_LINK + _NAV_CSS + _nav(active) + _SPINNER_HTML + _SPINNER_JS + html
 
 
 # --------------------------------------------------------------------------- #
