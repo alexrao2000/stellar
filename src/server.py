@@ -326,18 +326,29 @@ def api_ensure_range(start: str, end: str) -> dict:
     return {"start": start, "end": end, "days_touched": len(created), "created": created}
 
 
+def _sort_order() -> dict[str, int]:
+    """title -> sort_order, cached; it changes only when habits are edited."""
+    def build():
+        rows = (
+            _sb().table("recurring_tasks").select("title,sort_order").execute().data or []
+        )
+        return {r["title"]: r["sort_order"] for r in rows}
+
+    return _cached("sort_order", build)
+
+
 @app.get("/api/day/{day}")
 def api_day(day: str) -> list[dict]:
-    """A day's tasks, ordered as the check-in page shows them."""
+    """A day's tasks, ordered as the check-in page shows them.
+
+    Served from the cached history rather than querying Supabase. Writes patch
+    that cache, so it is already current -- and this is on the path of every
+    task tap, where a live round trip was costing ~200ms of visible spinner.
+    """
     _check_day(day)
-    client = _sb()
-    defs = {
-        d["title"]: d["sort_order"]
-        for d in (client.table("recurring_tasks").select("title,sort_order")
-                  .execute().data or [])
-    }
-    rows = _day_rows(client, day)
-    rows.sort(key=lambda r: (defs.get(r["title"], 999), r["title"]))
+    order = _sort_order()
+    rows = [r for r in _task_history() if r["day"] == day]
+    rows.sort(key=lambda r: (order.get(r["title"], 999), r["title"]))
     return rows
 
 
