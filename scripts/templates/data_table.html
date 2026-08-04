@@ -1,0 +1,244 @@
+<title>Data</title>
+<style>
+:root {
+  --bg: #EFEEF4; --surface: #FCFBFE; --surface-2: #F4F2F9;
+  --ink: #191627; --ink-muted: #6A6480; --rule: #DCD8E6;
+  --done: #4C6E43; --miss: #A33A28; --accent: #6D4AC4;
+  --shadow: 0 1px 2px rgba(25,22,39,.06), 0 2px 8px rgba(25,22,39,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131019; --surface: #1B1826; --surface-2: #232032;
+    --ink: #EBE8F5; --ink-muted: #948DAD; --rule: #2E2A3D;
+    --done: #8FBF7F; --miss: #E3806B; --accent: #8B63E8;
+    --shadow: 0 1px 2px rgba(0,0,0,.5), 0 2px 10px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131019; --surface: #1B1826; --surface-2: #232032;
+  --ink: #EBE8F5; --ink-muted: #948DAD; --rule: #2E2A3D;
+  --done: #8FBF7F; --miss: #E3806B; --accent: #8B63E8;
+  --shadow: 0 1px 2px rgba(0,0,0,.5), 0 2px 10px rgba(0,0,0,.3);
+}
+:root[data-theme="light"] {
+  --bg: #EFEEF4; --surface: #FCFBFE; --surface-2: #F4F2F9;
+  --ink: #191627; --ink-muted: #6A6480; --rule: #DCD8E6;
+  --done: #4C6E43; --miss: #A33A28; --accent: #6D4AC4;
+  --shadow: 0 1px 2px rgba(25,22,39,.06), 0 2px 8px rgba(25,22,39,.04);
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.wrap { max-width: 1200px; margin: 0 auto; padding: 28px 18px 64px; }
+
+.eyebrow {
+  font-family: ui-monospace, Menlo, monospace; font-size: .66rem;
+  letter-spacing: .16em; text-transform: uppercase; color: var(--ink-muted); margin: 0 0 8px;
+}
+h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -.02em; margin: 0 0 6px; }
+.sub { color: var(--ink-muted); font-size: .9rem; margin: 0; }
+.appnav { display: flex; gap: 14px; margin: 0 0 16px; font-size: .82rem; }
+.appnav a { color: var(--ink-muted); text-decoration: none; }
+.appnav a:hover { color: var(--ink); text-decoration: underline; }
+.appnav a.here { color: var(--ink); font-weight: 600; }
+
+.bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 18px 0 12px; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 9px;
+  box-shadow: var(--shadow);
+}
+.bar input[type="search"], .bar select {
+  font: inherit; font-size: .86rem; padding: 8px 10px; border-radius: 7px;
+  border: 1px solid var(--rule); background: var(--bg); color: var(--ink);
+}
+.bar input[type="search"] { flex: 1; min-width: 160px; }
+.count { margin-left: auto; font-size: .78rem; color: var(--ink-muted);
+  font-family: ui-monospace, Menlo, monospace; }
+.pager { display: flex; gap: 6px; align-items: center; }
+.pager button {
+  border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
+  font: inherit; font-size: .84rem; padding: 7px 12px; border-radius: 7px; cursor: pointer;
+}
+.pager button:disabled { opacity: .35; cursor: default; }
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+.tablewrap {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 9px;
+  box-shadow: var(--shadow); overflow-x: auto;
+}
+table { border-collapse: collapse; width: 100%; font-size: .84rem; }
+th, td {
+  text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule);
+  vertical-align: top; white-space: nowrap;
+}
+th {
+  position: sticky; top: 0; background: var(--surface-2); z-index: 1;
+  font-size: .66rem; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--ink-muted); font-weight: 700;
+}
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--surface-2); }
+td.notes { white-space: pre-wrap; max-width: 420px; font-size: .78rem;
+  font-family: ui-monospace, Menlo, monospace; color: var(--ink-muted); }
+.pill {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  font-size: .68rem; font-weight: 700;
+}
+.pill.done { color: var(--done); background: color-mix(in srgb, var(--done) 16%, transparent); }
+.pill.miss { color: var(--miss); background: color-mix(in srgb, var(--miss) 16%, transparent); }
+.empty { padding: 30px; text-align: center; color: var(--ink-muted); font-size: .88rem; }
+</style>
+
+<div class="wrap">
+  <nav class="appnav"><a href="/">Today</a><a href="/calendar">Calendar</a><a href="/weight">Weight</a><a href="/wake">Wake</a><a href="/consistency">Consistency</a><a class="here" href="/data">Data</a></nav>
+
+  <p class="eyebrow">task_history</p>
+  <h1>Data</h1>
+  <p class="sub">Every stored record, newest first.</p>
+
+  <div class="bar">
+    <input type="search" id="q" placeholder="Filter by task, note or date…" aria-label="Filter">
+    <select id="status" aria-label="Status">
+      <option value="">All</option>
+      <option value="done">Completed</option>
+      <option value="miss">Not completed</option>
+    </select>
+    <select id="size" aria-label="Rows per page">
+      <option>50</option><option>100</option><option>200</option>
+    </select>
+    <label style="font-size:.8rem;color:var(--ink-muted);display:flex;gap:6px;align-items:center">
+      <input type="checkbox" id="future"> show future
+    </label>
+    <span class="count mono" id="count"></span>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th>Date</th><th>Task</th><th>List</th><th>Status</th>
+        <th>Weight</th><th>Source</th><th>Completed</th><th>Notes</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <div class="bar" style="margin-top:12px">
+    <div class="pager">
+      <button id="first" type="button">&laquo; First</button>
+      <button id="prev" type="button">&lsaquo; Prev</button>
+      <span class="count mono" id="page"></span>
+      <button id="next" type="button">Next &rsaquo;</button>
+      <button id="last" type="button">Last &raquo;</button>
+    </div>
+  </div>
+</div>
+
+<script id="bootstrap" type="application/json">__BOOTSTRAP__</script>
+<script>
+(function () {
+  var BOOT = JSON.parse(document.getElementById('bootstrap').textContent);
+  var ALL = [], view = [], page = 0;
+
+  /* Days are materialised ahead of time, so the table would otherwise open on a
+     wall of empty placeholder rows months out. Hide anything past today unless
+     asked; local parts, not UTC, or the current day disappears each evening. */
+  var now = new Date();
+  var TODAY = now.getFullYear() + '-' +
+    String(now.getMonth() + 1).padStart(2, '0') + '-' +
+    String(now.getDate()).padStart(2, '0');
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function size() { return Number(document.getElementById('size').value); }
+
+  function applyFilters() {
+    var q = document.getElementById('q').value.trim().toLowerCase();
+    var st = document.getElementById('status').value;
+    var showFuture = document.getElementById('future').checked;
+    view = ALL.filter(function (r) {
+      if (!showFuture && r.day > TODAY) return false;
+      if (st === 'done' && !r.is_completed) return false;
+      if (st === 'miss' && r.is_completed) return false;
+      if (!q) return true;
+      return (r.day + ' ' + r.title + ' ' + (r.list_title || '') + ' ' +
+              (r.notes || '')).toLowerCase().indexOf(q) !== -1;
+    });
+    page = 0;
+    render();
+  }
+
+  function render() {
+    var n = size();
+    var pages = Math.max(1, Math.ceil(view.length / n));
+    page = Math.min(Math.max(0, page), pages - 1);
+    var slice = view.slice(page * n, page * n + n);
+
+    document.getElementById('rows').innerHTML = slice.length
+      ? slice.map(function (r) {
+          var w = r.weight_lbs === null || r.weight_lbs === undefined
+            ? '' : Number(r.weight_lbs).toFixed(1);
+          return '<tr>' +
+            '<td class="mono">' + esc(r.day) + '</td>' +
+            '<td>' + esc(r.title) + '</td>' +
+            '<td>' + esc(r.list_title || '') + '</td>' +
+            '<td><span class="pill ' + (r.is_completed ? 'done">Done' : 'miss">Not done') +
+              '</span></td>' +
+            '<td class="mono">' + w + '</td>' +
+            '<td class="mono">' + esc(r.weight_source || '') + '</td>' +
+            '<td class="mono">' + esc((r.completed_at || '').replace('T', ' ').slice(0, 16)) + '</td>' +
+            '<td class="notes">' + esc(r.notes || '') + '</td>' +
+          '</tr>';
+        }).join('')
+      : '<tr><td colspan="8" class="empty">Nothing matches that filter.</td></tr>';
+
+    document.getElementById('count').textContent =
+      view.length.toLocaleString() + ' of ' + ALL.length.toLocaleString() + ' rows';
+    document.getElementById('page').textContent = 'page ' + (page + 1) + ' / ' + pages;
+    document.getElementById('first').disabled = page === 0;
+    document.getElementById('prev').disabled = page === 0;
+    document.getElementById('next').disabled = page >= pages - 1;
+    document.getElementById('last').disabled = page >= pages - 1;
+  }
+
+  ['q', 'status', 'size', 'future'].forEach(function (id) {
+    document.getElementById(id).addEventListener('input', applyFilters);
+  });
+  document.getElementById('first').addEventListener('click', function () { page = 0; render(); });
+  document.getElementById('prev').addEventListener('click', function () { page--; render(); });
+  document.getElementById('next').addEventListener('click', function () { page++; render(); });
+  document.getElementById('last').addEventListener('click', function () {
+    page = Math.ceil(view.length / size()) - 1; render();
+  });
+
+  fetch(BOOT.endpoint, { headers: BOOT.headers || {} })
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      /* Newest first: the rows you just recorded are the ones you want to see. */
+      ALL = data.slice().sort(function (a, b) {
+        return a.day < b.day ? 1 : a.day > b.day ? -1 : a.title.localeCompare(b.title);
+      });
+      applyFilters();
+    })
+    .catch(function (e) {
+      document.getElementById('rows').innerHTML =
+        '<tr><td colspan="8" class="empty">Could not load: ' + esc(e.message) + '</td></tr>';
+    });
+})();
+</script>
