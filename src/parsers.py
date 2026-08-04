@@ -12,11 +12,15 @@ from datetime import datetime, time
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from .tasks_client import TaskRecord
 from .titles import matches_metric_title
 
 if TYPE_CHECKING:
+    # Type-only. Importing tasks_client at runtime drags in googleapiclient and
+    # google-auth, which the note parsers here never touch -- and which the app
+    # server would then carry purely to use parse_wake_up. Annotations are
+    # strings under `from __future__ import annotations`, so this is safe.
     from .calendar_client import CalendarEventRecord
+    from .tasks_client import TaskRecord
 
 # "Wake-up Time: 7:30 AM"  /  "Wake up Time: 06:05 pm"
 _WAKE_RE = re.compile(r"wake[\s-]*up\s*time\s*:\s*(\d{1,2}):(\d{2})\s*([AaPp][Mm])", re.IGNORECASE)

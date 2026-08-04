@@ -18,13 +18,12 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
 from .config import load_config
 from .parsers import parse_wake_up
-from .read import read_table
+from .read import read_rows
 
 log = logging.getLogger("cal-task-sync")
 
@@ -53,35 +52,28 @@ def _cached(key: str, build):
     return value
 
 
-def _clean(value):
-    """JSON-safe: pandas NaN/NaT are not valid JSON and serialize as NaN."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return None
-    if pd.isna(value) if not isinstance(value, (list, dict, str)) else False:
-        return None
-    return value
+# Exactly what the pages consume. Whitelisted rather than passed through, so a
+# new database column cannot silently start shipping to the browser.
+HISTORY_COLS = (
+    "id", "day", "list_title", "title", "is_completed", "completed_at",
+    "notes", "weight_lbs", "weight_source", "takeout_weight",
+)
 
 
 def _task_history() -> list[dict]:
     def build():
-        config = load_config()
-        df = read_table(config, "task_history")
-        if df.empty:
-            return []
-        df = df.sort_values(["day", "title"])
-        cols = [
-            "day", "list_title", "title", "is_completed", "completed_at",
-            "notes", "weight_lbs", "weight_source", "takeout_weight",
-        ]
+        rows = read_rows(load_config(), "task_history")
         out = []
-        for _, r in df.iterrows():
-            rec = {c: _clean(r.get(c)) for c in cols}
-            rec["day"] = str(rec["day"])[:10]
+        for r in rows:
+            rec = {c: r.get(c) for c in HISTORY_COLS}
+            rec["day"] = str(rec["day"] or "")[:10]
             rec["is_completed"] = bool(r.get("is_completed"))
+            # numeric comes back as a string from PostgREST
             for numeric in ("weight_lbs", "takeout_weight"):
-                if rec[numeric] is not None:
-                    rec[numeric] = float(rec[numeric])
+                v = rec[numeric]
+                rec[numeric] = None if v is None or v == "" else float(v)
             out.append(rec)
+        out.sort(key=lambda r: (r["day"], r["title"]))
         return out
 
     return _cached("task_history", build)
