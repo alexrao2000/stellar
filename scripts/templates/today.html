@@ -99,7 +99,7 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--done-ink) 55%, transparent);
 }
-.task:disabled { opacity: .5; cursor: progress; }
+.task:disabled { opacity: .5; }
 .read-only .task:disabled { opacity: 1; cursor: default; }
 .read-only #status { color: var(--ink-muted); }
 .box {
@@ -130,7 +130,7 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
   font: inherit; font-weight: 700; font-size: .88rem; padding: 11px 16px;
   border-radius: 8px; cursor: pointer;
 }
-.field button:disabled { opacity: .5; cursor: progress; }
+.field button:disabled { opacity: .6; }
 input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); outline-offset: 2px; }
 
 #status {
@@ -232,6 +232,8 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     el.textContent = msg;
     el.className = bad ? 'bad' : 'ok';
   }
+  function setDone(el, done) { el.classList.toggle('done', done); }
+
   function post(url) {
     return fetch(url, { method: 'POST' }).then(function (res) {
       if (res.ok) return res.json();
@@ -260,12 +262,26 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
         b.style.cursor = 'default';
         b.style.opacity = '1';
       }
+      /* Optimistic: flip the tile now, confirm in the background. A write is
+         ~160ms and re-reading the day was another ~200ms, so waiting for both
+         meant a third of a second of spinner on every tap. Revert if it
+         fails -- silently keeping a wrong state would be worse than a stutter. */
       b.addEventListener('click', function () {
-        if (!BOOT.writable) return;
-        b.disabled = true;
-        post('/api/task/' + r.id + '/toggle?done=' + (!r.is_completed))
-          .then(function () { say(r.title + (r.is_completed ? ' un-done' : ' done')); return load(); })
-          .catch(function (e) { say(e.message, true); b.disabled = false; });
+        if (!BOOT.writable || b.dataset.busy) return;
+        var next = !r.is_completed;
+        b.dataset.busy = '1';
+        setDone(b, next);
+        post('/api/task/' + r.id + '/toggle?done=' + next)
+          .then(function (updated) {
+            r.is_completed = next;
+            if (updated && updated.weight_lbs !== undefined) r.weight_lbs = updated.weight_lbs;
+            say(r.title + (next ? ' done' : ' un-done'));
+          })
+          .catch(function (e) {
+            setDone(b, !next);          // put it back
+            say(e.message, true);
+          })
+          .then(function () { delete b.dataset.busy; });
       });
       host.appendChild(b);
 
