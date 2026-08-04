@@ -20,7 +20,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from .config import load_config
 from .parsers import parse_wake_up
@@ -136,15 +136,40 @@ def _cache_apply(changed: list[dict]) -> None:
         _cache["task_history"] = (ts, rows)
 
 
+# A bare checkmark in the app's accent purple -- no plate behind it, so the tab
+# reads the same on a light or a dark browser chrome. Split between the two
+# theme purples would be worse than either: the tab bar does not necessarily
+# match the page.
+FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<path d="M5 17l8 8L27 8" fill="none" stroke="#7A4FD8" stroke-width="5.5"'
+    ' stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)
+
+_FAVICON_LINK = '<link rel="icon" href="/favicon.svg" type="image/svg+xml">'
+
+
+@app.get("/favicon.svg")
+def favicon() -> Response:
+    return Response(
+        FAVICON_SVG,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 def _render(template: str, boot: dict) -> str:
     import json
 
     path = TEMPLATES / template
     if not path.exists():
         raise HTTPException(500, f"template missing: {template}")
-    return path.read_text(encoding="utf-8").replace(
+    html = path.read_text(encoding="utf-8").replace(
         "__BOOTSTRAP__", json.dumps(boot, separators=(",", ":"))
     )
+    # Injected here rather than in each template: every page goes through this
+    # one function, so there is no way to add a view and forget the icon.
+    return _FAVICON_LINK + html
 
 
 # --------------------------------------------------------------------------- #
