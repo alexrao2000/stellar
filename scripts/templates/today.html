@@ -70,10 +70,6 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
   background: var(--surface); color: var(--ink);
   font-family: ui-monospace, Menlo, monospace;
 }
-.appnav { margin-top: 12px; display: flex; gap: 14px; font-size: .82rem; }
-.appnav a { color: var(--ink-muted); text-decoration: none; }
-.appnav a:hover { color: var(--ink); text-decoration: underline; }
-.appnav a.here { color: var(--ink); font-weight: 600; }
 
 .card {
   background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
@@ -155,7 +151,6 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       <input type="date" id="pick" aria-label="Jump to a date">
       <button class="step wide" id="go-today" type="button">Today</button>
     </div>
-    <nav class="appnav"><a class="here" href="/">Today</a><a href="/calendar">Calendar</a><a href="/weight">Weight</a><a href="/wake">Wake</a><a href="/consistency">Consistency</a><a href="/data">Data</a><a href="/docs">API</a></nav>
   </header>
 
   <div class="card">

@@ -13,6 +13,7 @@ Run:  make dev        (or: uvicorn src.server:app --reload --port 8000)
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -43,7 +44,10 @@ CURRENT_WEIGHT_CLAUSE = re.compile(
 CACHE_TTL = 900.0
 _cache: dict[str, tuple[float, object]] = {}
 
-app = FastAPI(title="task-tracker", docs_url="/docs")
+# docs_url=None: /docs is served below instead, so that the API reference gets
+# the same sidebar as every other view. FastAPI's own page has no way back to
+# the app, which made the nav's last link a one-way door.
+app = FastAPI(title="task-tracker", docs_url=None)
 
 # The history payload is ~1.8 MB of highly repetitive JSON. Compressed it is a
 # fraction of that, which is most of the cold-load cost on any connection
@@ -158,7 +162,231 @@ def favicon() -> Response:
     )
 
 
-def _render(template: str, boot: dict) -> str:
+# The one definition of the nav. It used to be copied into all five templates,
+# which is how /docs ended up linked from the check-in page and nowhere else.
+NAV_ITEMS = (
+    ("/", "Today"),
+    ("/calendar", "Calendar"),
+    ("/weight", "Weight"),
+    ("/wake", "Wake"),
+    ("/consistency", "Consistency"),
+    ("/data", "Data"),
+    ("/docs", "API"),
+)
+
+# Only variables every template already defines are used here, so the sidebar
+# picks up each page's light/dark palette without carrying its own.
+_NAV_CSS = """<style>
+:root { --nav-w: 172px; --nav-accent: #7A4FD8; }
+/* Fallback palette for a page that brings none of its own -- /docs is Swagger
+   UI, not one of our templates. Declared first, so a template's own :root,
+   which comes later in the document, overrides every one of these. */
+:root {
+  --surface: #FCFBFE; --surface-2: #F4F2F9; --rule: #DCD8E6;
+  --ink: #191627; --ink-muted: #6A6480;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #1B1826; --surface-2: #232032; --rule: #2E2A3D;
+    --ink: #EBE8F5; --ink-muted: #948DAD;
+  }
+}
+/* `html body` beats the templates' own `html, body { padding: 0 }`, so this
+   holds no matter which order the two stylesheets land in. */
+html body { padding-left: var(--nav-w); }
+/* Stated, not assumed. The templates all set `* { box-sizing: border-box }`,
+   but /docs is Swagger UI and does not -- there the 172px width gained its
+   padding and border on top, making the column 193px while the body was only
+   offset 172, and tucking 21px of the page under it. */
+.sidenav, .sidenav * { box-sizing: border-box; }
+.sidenav {
+  position: fixed; top: 0; bottom: 0; left: 0; width: var(--nav-w); z-index: 20;
+  background: var(--surface); border-right: 1px solid var(--rule);
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 18px 10px; overflow-y: auto;
+  /* Stated rather than inherited: on /docs the surrounding page is Swagger UI,
+     which sets its own family and root size, and the nav picked both up. */
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px; line-height: 1.2;
+}
+.sidenav .brand {
+  font-family: ui-monospace, Menlo, monospace; font-size: .74em;
+  letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-muted); padding: 0 10px 14px;
+}
+.sidenav a {
+  display: block; padding: 9px 10px; border-radius: 7px; font-size: 1em;
+  color: var(--ink-muted); text-decoration: none;
+  border-left: 2px solid transparent;
+}
+.sidenav a:hover { background: var(--surface-2); color: var(--ink); }
+.sidenav a.here {
+  color: var(--ink); font-weight: 600;
+  background: var(--surface-2); border-left-color: var(--nav-accent);
+}
+.sidenav a:focus-visible { outline: 2px solid var(--nav-accent); outline-offset: -2px; }
+/* The check-in page is phone-first -- it gets used standing in a bathroom. A
+   fixed column would eat a third of that screen, so below this width the nav
+   goes back to a scrollable strip across the top. */
+@media (max-width: 760px) {
+  html body { padding-left: 0; }
+  .sidenav {
+    position: sticky; top: 0; bottom: auto; width: auto;
+    flex-direction: row; gap: 2px; padding: 7px 10px;
+    border-right: none; border-bottom: 1px solid var(--rule);
+    overflow-x: auto; overflow-y: hidden;
+  }
+  .sidenav .brand { display: none; }
+  .sidenav a {
+    white-space: nowrap; padding: 7px 10px;
+    border-left: none; border-bottom: 2px solid transparent;
+  }
+  .sidenav a.here { border-left-color: transparent; border-bottom-color: var(--nav-accent); }
+}
+@media print { .sidenav { display: none; } html body { padding-left: 0; } }
+
+/* Centred in the content area, not the window -- `left: var(--nav-w)` is what
+   keeps it off the sidebar. No backdrop: the page fills in behind it. */
+.app-loading {
+  position: fixed; top: 0; right: 0; bottom: 0; left: var(--nav-w);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 30; pointer-events: none;
+  transition: opacity .22s ease;
+}
+.app-loading[hidden] { display: none; }
+.app-loading.gone { opacity: 0; }
+.app-spinner {
+  width: 38px; height: 38px; fill: var(--nav-accent);
+  animation: app-spin .8s linear infinite;
+}
+@keyframes app-spin { to { transform: rotate(360deg); } }
+@media (max-width: 760px) { .app-loading { left: 0; } }
+/* Slowed rather than stopped -- a still spinner says nothing is happening. */
+@media (prefers-reduced-motion: reduce) { .app-spinner { animation-duration: 2.4s; } }
+</style>"""
+
+
+def _tapered_arc(
+    sweep: float = 285.0,
+    radius: float = 17.0,
+    tail: float = 3.4,
+    tip: float = 0.35,
+    steps: int = 72,
+    centre: float = 22.0,
+) -> str:
+    """SVG path for an arc that thins along its length.
+
+    A stroked arc cannot do this -- stroke-width is one number for the whole
+    path -- so the shape is a filled outline instead: out along a constant
+    radius, back along one that closes on it, leaving the tip nearly a point.
+    """
+    outer, inner = [], []
+    for i in range(steps + 1):
+        t = i / steps
+        angle = math.radians(-90.0 + sweep * t)
+        width = tail + (tip - tail) * t
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        outer.append((centre + radius * cos_a, centre + radius * sin_a))
+        inner.append((centre + (radius - width) * cos_a, centre + (radius - width) * sin_a))
+    points = outer + inner[::-1]
+    return "M" + " L".join(f"{x:.2f},{y:.2f}" for x, y in points) + " Z"
+
+
+_SPINNER_HTML = (
+    '<div class="app-loading" id="app-loading" role="status" aria-label="Loading">'
+    '<svg class="app-spinner" viewBox="0 0 44 44" aria-hidden="true">'
+    f'<path d="{_tapered_arc()}"/></svg></div>'
+)
+
+# Wrapping fetch beats wiring five templates by hand -- the same reason the nav
+# moved here. It also means a page added later is covered without doing
+# anything. Only the opening burst is tracked: once the network first falls
+# quiet the overlay is retired for good, so the write that a checkbox tap makes
+# never puts a spinner back on screen.
+_SPINNER_JS = """<script>
+(function () {
+  var el = document.getElementById('app-loading');
+  if (!el || !window.fetch) { if (el) el.hidden = true; return; }
+  var inflight = 0, started = false, finished = false, quiet, giveup;
+
+  function finish() {
+    if (finished) return;
+    finished = true;
+    clearTimeout(quiet); clearTimeout(giveup);
+    window.fetch = real;
+    el.classList.add('gone');
+    setTimeout(function () { el.hidden = true; }, 260);
+  }
+
+  function settle() {
+    if (--inflight > 0) return;
+    /* Pages chain a second request off the first -- /today posts the day into
+       existence before reading it back. Waiting a beat keeps the wheel up
+       across that gap instead of flickering off between the two. */
+    quiet = setTimeout(finish, 140);
+  }
+
+  var real = window.fetch;
+  window.fetch = function () {
+    started = true;
+    inflight++;
+    clearTimeout(quiet);
+    return real.apply(this, arguments).then(
+      function (r) { settle(); return r; },
+      function (e) { settle(); throw e; }
+    );
+  };
+
+  /* A page that never fetches, or one whose request hangs, must not be left
+     under a spinner forever. */
+  giveup = setTimeout(finish, 15000);
+  window.addEventListener('load', function () {
+    setTimeout(function () { if (!started) finish(); }, 400);
+  });
+})();
+</script>"""
+
+
+def _nav(active: str) -> str:
+    links = "".join(
+        '<a href="{}"{}>{}</a>'.format(
+            href, ' class="here"' if href == active else "", label
+        )
+        for href, label in NAV_ITEMS
+    )
+    return (
+        '<nav class="sidenav" aria-label="Views">'
+        '<div class="brand">task-tracker</div>' + links + "</nav>"
+    )
+
+
+@app.get("/docs", include_in_schema=False)
+def swagger_docs() -> HTMLResponse:
+    """FastAPI's API reference, with the app's sidebar on it.
+
+    The stock page is a dead end: nothing on it links back, so the nav's last
+    link dropped you out of the app. Rather than open it in a new tab -- which
+    only hides the problem -- the generated page is served here with the nav
+    injected, and it behaves like every other view.
+    """
+    from fastapi.openapi.docs import get_swagger_ui_html
+
+    page = get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title="task-tracker API",
+        swagger_favicon_url="/favicon.svg",
+    ).body.decode()
+    # Swagger UI is a complete document, DOCTYPE included. Prepending to it the
+    # way _render does would put the page in quirks mode, so this goes just
+    # inside <body> instead.
+    if "<body>" not in page:  # pragma: no cover - guards a FastAPI upgrade
+        log.warning("swagger html shape changed; serving /docs without the nav")
+        return HTMLResponse(page)
+    shell = _NAV_CSS + _nav("/docs") + _SPINNER_HTML + _SPINNER_JS
+    return HTMLResponse(page.replace("<body>", "<body>" + shell, 1))
+
+
+def _render(template: str, boot: dict, active: str = "") -> str:
     import json
 
     path = TEMPLATES / template
@@ -168,8 +396,9 @@ def _render(template: str, boot: dict) -> str:
         "__BOOTSTRAP__", json.dumps(boot, separators=(",", ":"))
     )
     # Injected here rather than in each template: every page goes through this
-    # one function, so there is no way to add a view and forget the icon.
-    return _FAVICON_LINK + html
+    # one function, so there is no way to add a view and forget the icon or the
+    # nav, or to leave one page's copy of the link list behind when it changes.
+    return _FAVICON_LINK + _NAV_CSS + _nav(active) + _SPINNER_HTML + _SPINNER_JS + html
 
 
 # --------------------------------------------------------------------------- #
@@ -483,7 +712,7 @@ def page_today(day: str | None = None) -> str:
         "day": day,
         "writable": date.fromisoformat(day) >= WRITE_FLOOR,
         "floor": WRITE_FLOOR.isoformat(),
-    })
+    }, active="/")
 
 
 @app.get("/calendar", response_class=HTMLResponse)
@@ -491,7 +720,7 @@ def page_calendar() -> str:
     # Same-origin, no credentials, whole set in one response.
     return _render("calendar_view.html", {
         "mode": "live", "endpoint": "/api/task_history", "headers": {}, "paged": False,
-    })
+    }, active="/calendar")
 
 
 # Both series render through scripts/templates/series_chart.html. They differ
@@ -533,7 +762,7 @@ def page_weight() -> str:
     return _render("series_chart.html", {
         "mode": "live", "endpoint": "/api/weights", "headers": {}, "paged": False,
         "cfg": WEIGHT_CFG,
-    })
+    }, active="/weight")
 
 
 @app.get("/wake", response_class=HTMLResponse)
@@ -541,21 +770,21 @@ def page_wake() -> str:
     return _render("series_chart.html", {
         "mode": "live", "endpoint": "/api/wake", "headers": {}, "paged": False,
         "cfg": WAKE_CFG,
-    })
+    }, active="/wake")
 
 
 @app.get("/consistency", response_class=HTMLResponse)
 def page_consistency() -> str:
     return _render("consistency.html", {
         "mode": "live", "endpoint": "/api/task_history", "headers": {}, "paged": False,
-    })
+    }, active="/consistency")
 
 
 @app.get("/data", response_class=HTMLResponse)
 def page_data() -> str:
     return _render("data_table.html", {
         "mode": "live", "endpoint": "/api/task_history", "headers": {}, "paged": False,
-    })
+    }, active="/data")
 
 
 @app.get("/health")

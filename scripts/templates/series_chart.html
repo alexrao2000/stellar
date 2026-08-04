@@ -172,14 +172,9 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   .seg { margin-left: 0; }
 }
 
-.appnav { display: flex; gap: 14px; margin: 0 0 16px; font-size: .82rem; }
-.appnav a { color: var(--ink-muted); text-decoration: none; }
-.appnav a:hover { color: var(--ink); text-decoration: underline; }
-.appnav a.here { color: var(--ink); font-weight: 600; }
 </style>
 
 <div class="wrap">
-  <nav class="appnav"><a href="/">Today</a><a href="/calendar">Calendar</a><a href="/weight">Weight</a><a href="/wake">Wake</a><a href="/consistency">Consistency</a><a href="/data">Data</a></nav>
   <p class="eyebrow" id="eyebrow"></p>
   <h1 id="page-title"></h1>
   <p class="sub" id="page-sub"></p>
@@ -261,10 +256,6 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   document.getElementById('page-sub').textContent = CFG.sub;
   document.getElementById('lg-a').textContent = CFG.legend || 'Daily';
   document.getElementById('f-noun').textContent = CFG.noun || 'entries';
-  /* One template serves two routes, so the active nav link is marked here. */
-  Array.prototype.forEach.call(document.querySelectorAll('.appnav a'), function (a) {
-    if (a.getAttribute('href') === location.pathname) a.classList.add('here');
-  });
   if (CFG.statLabels) {
     Object.keys(CFG.statLabels).forEach(function (id) {
       var el = document.getElementById(id);
