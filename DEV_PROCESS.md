@@ -185,7 +185,18 @@ dead. An earlier attempt at rotation actually re-*enabled* them, reviving it.
 
 ## Google Tasks
 
-**Untouched, except one action the user ran:** `restore_task --apply`, which
+**Standing rule, added 2026-08-01: never write to Google Tasks directly.**
+Everything goes through a wrapper that dry-runs by default and is reviewed
+before applying. Alex's assessment is that the assistant caused the overwrite,
+and that a second one occurred around 2026-07-31. See `NOTES.md`.
+
+The assistant did write to Google: 17 task creations and 17 deletions on Jul
+30-31. Those were characterised as safe additive operations; that was never
+verified and cannot be, because the API cannot enumerate historical occurrences
+and so cannot compare a series before and after a write. A clean read is not
+evidence a write was safe.
+
+**Otherwise untouched, except one action the user ran:** `restore_task --apply`, which
 un-deleted one task and re-dated it. Beyond that, 16 seeded tasks were created
 and then all deleted at the user's request. The archive
 `data/takeout/tasks-takeout-2026-07-31.zip` is byte-identical to the original
