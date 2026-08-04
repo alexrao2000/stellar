@@ -46,7 +46,7 @@ _cache: dict[str, tuple[float, object]] = {}
 # docs_url=None: /docs is served below instead, so that the API reference gets
 # the same sidebar as every other view. FastAPI's own page has no way back to
 # the app, which made the nav's last link a one-way door.
-app = FastAPI(title="task-tracker", docs_url=None)
+app = FastAPI(title="Task Tracker", docs_url=None)
 
 # The history payload is ~1.8 MB of highly repetitive JSON. Compressed it is a
 # fraction of that, which is most of the cold-load cost on any connection
@@ -396,7 +396,7 @@ def _nav(active: str) -> str:
     )
     return (
         '<nav class="sidenav" aria-label="Views">'
-        '<div class="brand">task-tracker</div>' + links + "</nav>"
+        '<div class="brand">Task Tracker</div>' + links + "</nav>"
     )
 
 
@@ -413,7 +413,7 @@ def swagger_docs() -> HTMLResponse:
 
     page = get_swagger_ui_html(
         openapi_url=app.openapi_url,
-        title="task-tracker API",
+        title="Task Tracker API",
         swagger_favicon_url="/favicon.svg",
     ).body.decode()
     # Swagger UI is a complete document, DOCTYPE included. Prepending to it the
