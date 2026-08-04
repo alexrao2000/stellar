@@ -90,8 +90,12 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
   background: var(--todo-bg); color: var(--todo-ink); font-weight: 600;
   transition: background .12s, color .12s;
 }
-.task.done {
-  background: var(--done-bg); color: var(--done-ink); font-weight: 400;
+.task.done { background: var(--done-bg); color: var(--done-ink); font-weight: 400; }
+/* On .task this propagated into .val and struck the recorded number through
+   too. A descendant cannot cancel an inherited decoration, and .val is a flex
+   item -- blockified -- so the inline-block escape hatch is unavailable. Strike
+   the title itself instead. */
+.task.done .ttl {
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--done-ink) 55%, transparent);
 }
@@ -108,7 +112,12 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
   border-left: 2px solid var(--surface); border-bottom: 2px solid var(--surface);
   transform: rotate(-45deg) translate(0, -1px);
 }
+.task .ttl { flex: 1; }
 .task .val { margin-left: auto; font-family: ui-monospace, Menlo, monospace; font-size: .84rem; }
+/* These two are resolved by their field, not by tapping. Clicking one puts the
+   cursor in the input rather than doing nothing, so the row is a signpost
+   instead of a dead control. */
+.task.viafield { cursor: text; }
 
 .field { display: flex; gap: 8px; align-items: center; padding: 4px 2px; }
 .field label {
@@ -158,13 +167,13 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     <div class="body">
       <div class="field">
         <label for="weight">Weight</label>
-        <input id="weight" type="number" inputmode="decimal" step="0.2" placeholder="152.0">
+        <input id="weight" type="number" inputmode="decimal" step="0.2" placeholder="lbs">
       </div>
       <div class="field">
         <label for="wake">Wake up</label>
         <input id="wake" type="time">
       </div>
-      <div class="hint">Saves as soon as you finish typing. Either one also marks its task complete.</div>
+      <div class="hint">Saves as soon as you finish typing. Wake Up and Weigh yourself are completed by these fields, not by tapping.</div>
     </div>
   </div>
 
@@ -226,6 +235,21 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   }
   function setDone(el, done) { el.classList.toggle('done', done); }
 
+  /* One reader for the wake-up note, used by both the input prefill and the
+     row read-out. `value` is what <input type=time> wants; `display` is what
+     reads naturally beside the task. */
+  function wakeFromNotes(notes) {
+    if (!notes) return null;
+    var m = /(\d{1,2}):(\d{2})\s*([AaPp][Mm])/.exec(notes);
+    if (!m) return null;
+    var h = Number(m[1]) % 12;
+    if (m[3].toLowerCase() === 'pm') h += 12;
+    return {
+      value: String(h).padStart(2, '0') + ':' + m[2],
+      display: (h % 12 || 12) + ':' + m[2] + ' ' + (h < 12 ? 'am' : 'pm')
+    };
+  }
+
   function post(url) {
     return fetch(url, { method: 'POST' }).then(function (res) {
       if (res.ok) return res.json();
@@ -241,14 +265,27 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     var host = document.getElementById('tasks');
     host.innerHTML = '';
     rows.forEach(function (r) {
+      /* These two are readings, not checkboxes. Ticking one by hand would
+         claim a measurement that was never taken, so they are resolved by
+         their field and clicking the row just goes there. */
+      var viaField = r.title === WEIGH ? 'weight' : (r.title === WAKE ? 'wake' : null);
+
       var b = document.createElement('button');
       b.type = 'button';
-      b.className = 'task' + (r.is_completed ? ' done' : '');
+      b.className = 'task' + (r.is_completed ? ' done' : '') + (viaField ? ' viafield' : '');
       var extra = '';
       if (r.title === WEIGH && r.weight_lbs !== null && r.weight_lbs !== undefined) {
         extra = '<span class="val">' + Number(r.weight_lbs).toFixed(1) + '</span>';
       }
-      b.innerHTML = '<span class="box"></span><span>' + esc(r.title) + '</span>' + extra;
+      if (r.title === WAKE) {
+        var wk = wakeFromNotes(r.notes);
+        if (wk) extra = '<span class="val">' + esc(wk.display) + '</span>';
+      }
+      b.innerHTML = '<span class="box"></span><span class="ttl">' + esc(r.title) +
+        '</span>' + extra;
+      if (viaField) {
+        b.title = 'Set by the ' + (viaField === 'weight' ? 'Weight' : 'Wake up') + ' field above';
+      }
       if (!BOOT.writable) {
         b.disabled = true;
         b.style.cursor = 'default';
@@ -260,6 +297,12 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
          fails -- silently keeping a wrong state would be worse than a stutter. */
       b.addEventListener('click', function () {
         if (!BOOT.writable || b.dataset.busy) return;
+        if (viaField) {
+          var f = document.getElementById(viaField);
+          f.focus();
+          if (f.showPicker) { try { f.showPicker(); } catch (e) { /* not user-gesture */ } }
+          return;
+        }
         var next = !r.is_completed;
         b.dataset.busy = '1';
         setDone(b, next);
@@ -283,14 +326,11 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
         document.getElementById('weight').value = Number(r.weight_lbs).toFixed(1);
         saved.weight = document.getElementById('weight').value;
       }
-      if (r.title === WAKE && r.notes) {
-        var m = /(\d{1,2}):(\d{2})\s*([AaPp][Mm])/.exec(r.notes);
-        if (m) {
-          var h = Number(m[1]) % 12;
-          if (m[3].toLowerCase() === 'pm') h += 12;
-          document.getElementById('wake').value =
-            String(h).padStart(2, '0') + ':' + m[2];
-          saved.wake = document.getElementById('wake').value;
+      if (r.title === WAKE) {
+        var w = wakeFromNotes(r.notes);
+        if (w) {
+          document.getElementById('wake').value = w.value;
+          saved.wake = w.value;
         }
       }
     });
