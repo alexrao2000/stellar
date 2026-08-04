@@ -125,12 +125,11 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
   background: var(--bg); color: var(--ink);
   font-family: ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums;
 }
-.field button {
-  border: none; background: var(--todo-bg); color: var(--todo-ink);
-  font: inherit; font-weight: 700; font-size: .88rem; padding: 11px 16px;
-  border-radius: 8px; cursor: pointer;
-}
-.field button:disabled { opacity: .6; }
+.field input:disabled { opacity: .6; }
+/* The only in-flight cue now that the Save buttons are gone. Deliberately
+   quiet: a spinner on a field you have already moved on from reads as an
+   error. */
+.field input.saving { border-color: var(--todo-bg); }
 input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); outline-offset: 2px; }
 
 #status {
@@ -165,14 +164,12 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       <div class="field">
         <label for="weight">Weight</label>
         <input id="weight" type="number" inputmode="decimal" step="0.2" placeholder="152.0">
-        <button id="save-weight" type="button">Save</button>
       </div>
       <div class="field">
         <label for="wake">Wake up</label>
         <input id="wake" type="time">
-        <button id="save-wake" type="button">Save</button>
       </div>
-      <div class="hint">Saving either one also marks its task complete.</div>
+      <div class="hint">Saves as soon as you finish typing. Either one also marks its task complete.</div>
     </div>
   </div>
 
@@ -289,6 +286,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
          value rather than an empty box. */
       if (r.title === WEIGH && r.weight_lbs !== null && r.weight_lbs !== undefined) {
         document.getElementById('weight').value = Number(r.weight_lbs).toFixed(1);
+        saved.weight = document.getElementById('weight').value;
       }
       if (r.title === WAKE && r.notes) {
         var m = /(\d{1,2}):(\d{2})\s*([AaPp][Mm])/.exec(r.notes);
@@ -297,6 +295,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
           if (m[3].toLowerCase() === 'pm') h += 12;
           document.getElementById('wake').value =
             String(h).padStart(2, '0') + ':' + m[2];
+          saved.wake = document.getElementById('wake').value;
         }
       }
     });
@@ -308,35 +307,41 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       .then(render);
   }
 
-  document.getElementById('save-weight').addEventListener('click', function () {
-    var v = document.getElementById('weight').value;
-    if (!v) { say('Enter a weight first.', true); return; }
-    this.disabled = true;
-    var btn = this;
-    post('/api/day/' + DAY + '/weight?lbs=' + encodeURIComponent(v))
-      .then(function () { say('Weight saved: ' + Number(v).toFixed(1) + ' lbs'); return load(); })
-      .catch(function (e) { say(e.message, true); })
-      .then(function () { btn.disabled = false; });
-  });
+  /* Both fields save themselves. `change` rather than `input`: on a number
+     field it fires on blur or Enter, so a value is only sent once you have
+     finished typing -- `input` would post "1", then "15", then "152". The last
+     saved value is remembered so blurring an untouched field is a no-op. */
+  var saved = { weight: null, wake: null };
 
-  document.getElementById('save-wake').addEventListener('click', function () {
-    var v = document.getElementById('wake').value;
-    if (!v) { say('Enter a time first.', true); return; }
-    this.disabled = true;
-    var btn = this;
-    post('/api/day/' + DAY + '/wake?time=' + encodeURIComponent(v))
-      .then(function () { say('Wake-up saved: ' + v); return load(); })
-      .catch(function (e) { say(e.message, true); })
-      .then(function () { btn.disabled = false; });
-  });
+  function autosave(id, build, describe) {
+    var el = document.getElementById(id);
+    el.addEventListener('change', function () {
+      var v = el.value;
+      if (!v || v === saved[id]) return;      // cleared, or nothing changed
+      el.classList.add('saving');
+      post(build(v))
+        .then(function () {
+          saved[id] = v;
+          say(describe(v));
+          return load();                       // reflects the auto-completion
+        })
+        .catch(function (e) { say(e.message, true); })
+        .then(function () { el.classList.remove('saving'); });
+    });
+  }
+
+  autosave('weight',
+    function (v) { return '/api/day/' + DAY + '/weight?lbs=' + encodeURIComponent(v); },
+    function (v) { return 'Weight saved: ' + Number(v).toFixed(1) + ' lbs'; });
+
+  autosave('wake',
+    function (v) { return '/api/day/' + DAY + '/wake?time=' + encodeURIComponent(v); },
+    function (v) { return 'Wake-up saved: ' + v; });
 
   /* Days before the write floor are the reconciled history: show them, but do
      not offer to change them. Without this the page hard-failed on any such day
      rather than simply being read-only. */
   if (!BOOT.writable) {
-    ['save-weight', 'save-wake'].forEach(function (id) {
-      document.getElementById(id).disabled = true;
-    });
     ['weight', 'wake'].forEach(function (id) {
       document.getElementById(id).disabled = true;
     });
