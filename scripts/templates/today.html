@@ -101,6 +101,9 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
 }
 .task:disabled { opacity: .5; }
 .read-only .task:disabled { opacity: 1; cursor: default; }
+/* The input dims on a read-only day; the unit sits outside it and would
+   otherwise stay at full strength beside a faded number. */
+.read-only .field .unit { opacity: .6; }
 .read-only #status { color: var(--ink-muted); }
 .box {
   width: 20px; height: 20px; border-radius: 5px; flex: 0 0 auto;
@@ -114,6 +117,7 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
 }
 .task .ttl { flex: 1; }
 .task .val { margin-left: auto; font-family: ui-monospace, Menlo, monospace; font-size: .84rem; }
+.task .val .u { opacity: .65; }
 /* These two are resolved by their field, not by tapping. Clicking one puts the
    cursor in the input rather than doing nothing, so the row is a signpost
    instead of a dead control. */
@@ -123,6 +127,15 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
 .field label {
   font-size: .76rem; color: var(--ink-muted); min-width: 84px;
   font-family: ui-monospace, Menlo, monospace; text-transform: uppercase; letter-spacing: .06em;
+}
+/* The unit rides inside the box, against its right edge, so it reads as part
+   of the value rather than as a stray word at the far end of the row. */
+.field .withunit { flex: 1; min-width: 0; position: relative; display: flex; }
+.field .withunit input { padding-right: 44px; }
+.field .unit {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  pointer-events: none; font-size: .84rem; color: var(--ink-muted);
+  font-family: ui-monospace, Menlo, monospace;
 }
 .field input {
   flex: 1; min-width: 0; font: inherit; font-size: 1.05rem; padding: 11px 12px;
@@ -167,7 +180,10 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     <div class="body">
       <div class="field">
         <label for="weight">Weight</label>
-        <input id="weight" type="number" inputmode="decimal" step="0.2" placeholder="lbs">
+        <div class="withunit">
+          <input id="weight" type="number" inputmode="decimal" step="0.2" placeholder="0.0">
+          <span class="unit" aria-hidden="true">lbs</span>
+        </div>
       </div>
       <div class="field">
         <label for="wake">Wake up</label>
@@ -275,7 +291,8 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       b.className = 'task' + (r.is_completed ? ' done' : '') + (viaField ? ' viafield' : '');
       var extra = '';
       if (r.title === WEIGH && r.weight_lbs !== null && r.weight_lbs !== undefined) {
-        extra = '<span class="val">' + Number(r.weight_lbs).toFixed(1) + '</span>';
+        extra = '<span class="val">' + Number(r.weight_lbs).toFixed(1) +
+          ' <span class="u">lbs</span></span>';
       }
       if (r.title === WAKE) {
         var wk = wakeFromNotes(r.notes);
