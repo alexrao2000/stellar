@@ -110,18 +110,63 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .bigpct { font-family: ui-monospace, Menlo, monospace; font-size: 3rem; font-weight: 700; line-height: 1; }
 .headline .meta { color: var(--ink-muted); font-size: .84rem; }
 
-/* GitHub-style heatmap: weeks across, weekdays down. */
-.heat-scroll { overflow-x: auto; padding-bottom: 6px; }
-.heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 13px); gap: 3px; }
-.heat i {
-  width: 13px; height: 13px; border-radius: 3px; background: var(--empty); display: block;
+/* Weeks across, weekdays down -- GitHub's arrangement, and crucially its
+   structure: the month labels are cells of the same table as the tiles,
+   spanning their own weeks. They were previously a separate flex row sitting
+   outside the scroll container, so the tiles moved and the labels did not. */
+.heatwrap { display: flex; gap: 16px; align-items: flex-start; }
+
+/* One grid holds the month labels, the weekday labels and the tiles, and every
+   one of them is placed on an explicit line. That is what keeps a label over
+   its own weeks: it spans the very columns it names, so it cannot drift out of
+   step the way a separate row of labels did.
+
+   Grid rather than a table because table-layout:fixed takes its columns from
+   the first row -- which here is twelve colspan'd month headers -- and split
+   the width twelve ways, drawing a four-week month wider than a five-week one.
+   `1fr` columns are equal by construction, and they shrink to fit the
+   container instead of overflowing into a scrollbar. */
+/* Scrolls only when it has to. `1fr` keeps 53 weeks inside the container at
+   any desktop width, so there is nothing to scroll; the 8px floor stops the
+   tiles shrinking to nothing on a phone, where a whole year genuinely does not
+   fit -- at 360px with no floor they came out half a pixel across. When the
+   floor wins the grid overflows and this scrolls, and because the month labels
+   are tracks of the same grid they scroll with the tiles rather than staying
+   behind, which is what went wrong with the old separate label row. */
+.heatscroll { flex: 1; min-width: 0; overflow-x: auto; padding-bottom: 4px; }
+.heatgrid {
+  display: grid; gap: 3px; width: 100%;
+  grid-template-columns: 30px repeat(var(--weeks, 53), minmax(8px, 1fr));
+  grid-template-rows: 15px repeat(7, auto);
 }
-.heat i.done { background: var(--done); }
-.heat i.miss { background: var(--miss); }
-.heat i.future { background: transparent; box-shadow: inset 0 0 0 1px var(--rule); }
-.months {
-  display: flex; gap: 3px; font-size: .62rem; color: var(--ink-muted);
-  font-family: ui-monospace, Menlo, monospace; margin-bottom: 4px;
+.heatgrid .mlabel {
+  grid-row: 1; align-self: end; font-size: .62rem; color: var(--ink-muted);
+  font-family: ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden;
+}
+.heatgrid .dlabel {
+  grid-column: 1; font-size: .62rem; color: var(--ink-muted); text-align: right;
+  font-family: ui-monospace, Menlo, monospace; align-self: center; padding-right: 4px;
+}
+.heatgrid i.d { aspect-ratio: 1; border-radius: 2px; background: var(--empty); display: block; }
+.heatgrid i.d.done { background: var(--done); }
+.heatgrid i.d.miss { background: var(--miss); }
+.heatgrid i.d.future { background: transparent; box-shadow: inset 0 0 0 1px var(--rule); }
+.heatgrid i.d.blank { background: transparent; }
+
+.years { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
+.years button {
+  font: inherit; font-size: .8rem; font-family: ui-monospace, Menlo, monospace;
+  padding: 5px 12px; border-radius: 7px; cursor: pointer; text-align: right;
+  border: 1px solid transparent; background: transparent; color: var(--ink-muted);
+}
+.years button:hover { background: var(--surface-2); color: var(--ink); }
+.years button.on {
+  background: var(--surface-2); color: var(--ink); font-weight: 700;
+  border-color: var(--rule);
+}
+@media (max-width: 620px) {
+  .heatwrap { flex-direction: column-reverse; }
+  .years { flex-direction: row; flex-wrap: wrap; }
 }
 .legend { display: flex; gap: 14px; align-items: center; font-size: .74rem;
   color: var(--ink-muted); margin-top: 10px; flex-wrap: wrap; }
@@ -165,8 +210,10 @@ button:focus-visible, select:focus-visible, input:focus-visible {
         <div class="meta" id="meta"></div>
       </div>
       <div class="strip" id="tstrip" style="margin-top:0"></div>
-      <div class="months mono" id="months"></div>
-      <div class="heat-scroll"><div class="heat" id="heat"></div></div>
+      <div class="heatwrap">
+        <div class="heatscroll"><div class="heatgrid" id="heat" role="img" aria-label="Completion by day"></div></div>
+        <div class="years" id="years"></div>
+      </div>
       <div class="legend">
         <span><i style="background:var(--done)"></i>Completed</span>
         <span><i style="background:var(--miss)"></i>Missed</span>
@@ -305,37 +352,117 @@ button:focus-visible, select:focus-visible, input:focus-visible {
     heatmap(all);
   }
 
+  /* Which year the grid shows. The current calendar year, not a rolling 365
+     days: a window that opens in the middle of last August makes it impossible
+     to compare one year with another, which is most of the reason to look.
+     Null until the first render chooses. */
+  var HEAT_YEAR = null;
+
+  function heatYears(rows) {
+    var seen = {};
+    rows.forEach(function (r) { seen[r.day.slice(0, 4)] = 1; });
+    return Object.keys(seen).sort().reverse();
+  }
+
+  /* Columns are Monday-first weeks. A week is filed under the month its Monday
+     falls in, which is what lets every label span a whole number of columns and
+     sit exactly over them -- the labels are cells of this table, not a separate
+     row that could drift out of step with it. */
   function heatmap(rows) {
-    if (!rows.length) { document.getElementById('heat').innerHTML = ''; return; }
+    var host = document.getElementById('heat');
+    var nav = document.getElementById('years');
+    if (!rows.length) { host.innerHTML = ''; nav.innerHTML = ''; return; }
+
+    var years = heatYears(rows);
+    if (years.indexOf(HEAT_YEAR) === -1) {
+      var thisYear = TODAY.slice(0, 4);
+      HEAT_YEAR = years.indexOf(thisYear) !== -1 ? thisYear : years[0];
+    }
+
+    nav.innerHTML = years.map(function (y) {
+      return '<button type="button" data-year="' + y + '"' +
+        (y === HEAT_YEAR ? ' class="on" aria-current="true"' : '') + '>' + y + '</button>';
+    }).join('');
+
     var byDay = {};
     rows.forEach(function (r) { byDay[r.day] = r; });
-    var days = Object.keys(byDay).sort();
 
-    /* Start on the Monday of the first week so weekday rows line up. */
-    var start = parseDay(days[0]);
+    /* Jan 1 back to its Monday, Dec 31 forward to its Sunday, so the grid is
+       whole weeks and every column holds seven cells. */
+    var start = parseDay(HEAT_YEAR + '-01-01');
     start -= ((new Date(start).getUTCDay() + 6) % 7) * DAY;
-    var end = parseDay(days[days.length - 1]);
+    var end = parseDay(HEAT_YEAR + '-12-31');
+    end += (6 - ((new Date(end).getUTCDay() + 6) % 7)) * DAY;
 
-    var cells = [], months = [], lastMonth = -1;
-    for (var t = start; t <= end; t += DAY) {
-      var key = fmtDay(t), r = byDay[key];
-      var cls = !r ? '' : (key > TODAY ? 'future' : (r.is_completed ? 'done' : 'miss'));
-      var label = r
-        ? key + (key > TODAY ? ' — upcoming' : (r.is_completed ? ' — completed' : ' — missed'))
-        : key + ' — not scheduled';
-      cells.push('<i class="' + cls + '" title="' + esc(label) + '"></i>');
-
-      var d = new Date(t);
-      if (d.getUTCDay() === 1) {  /* one label per week column */
+    var weeks = [], months = [], lastMonth = -1;
+    for (var ts = start; ts <= end; ts += DAY) {
+      var d = new Date(ts);
+      if ((d.getUTCDay() + 6) % 7 === 0) {
+        weeks.push([]);
         var m = d.getUTCMonth();
-        months.push('<span style="width:13px;flex:0 0 13px">' +
-          (m !== lastMonth ? MO[m] : '') + '</span>');
-        lastMonth = m;
+        if (String(d.getUTCFullYear()) === HEAT_YEAR && m !== lastMonth) {
+          months.push({ m: m, span: 1 });
+          lastMonth = m;
+        } else if (months.length) {
+          months[months.length - 1].span++;
+        } else {
+          months.push({ m: -1, span: 1 });
+        }
+      }
+      weeks[weeks.length - 1].push(ts);
+    }
+
+    /* A one-column stub has no room to print a name in. Fold it into the month
+       that follows rather than letting a clipped label sit over the wrong week. */
+    if (months.length > 1 && months[0].span === 1) {
+      months[1].span += 1;
+      months.shift();
+    }
+
+    host.style.setProperty('--weeks', weeks.length);
+
+    /* Column 1 is the weekday gutter, so week w sits on line w + 2. Row 1 is
+       the month strip; weekday r sits on row r + 2. Everything is placed
+       explicitly -- nothing here depends on document order. */
+    var out = [], col = 1;
+    months.forEach(function (x) {
+      out.push('<div class="mlabel" style="grid-column:' + (col + 1) +
+        ' / span ' + x.span + '">' + (x.m < 0 ? '' : MO[x.m]) + '</div>');
+      col += x.span;
+    });
+
+    var DOW = ['Mon', '', 'Wed', '', 'Fri', '', ''];
+    for (var row = 0; row < 7; row++) {
+      if (DOW[row]) {
+        out.push('<div class="dlabel" style="grid-row:' + (row + 2) + '">' + DOW[row] + '</div>');
+      }
+      for (var w = 0; w < weeks.length; w++) {
+        var ts = weeks[w][row];
+        var key = ts === undefined ? '' : fmtDay(ts);
+        var pos = 'grid-column:' + (w + 2) + ';grid-row:' + (row + 2);
+        /* Pad days at either end belong to the neighbouring year. Their cells
+           stay, blank, so the columns keep their shape. */
+        if (!key || key.slice(0, 4) !== HEAT_YEAR) {
+          out.push('<i class="d blank" style="' + pos + '"></i>');
+          continue;
+        }
+        var r = byDay[key];
+        var cls = !r ? '' : (key > TODAY ? 'future' : (r.is_completed ? 'done' : 'miss'));
+        var label = r
+          ? key + (key > TODAY ? ' — upcoming' : (r.is_completed ? ' — completed' : ' — missed'))
+          : key + ' — not scheduled';
+        out.push('<i class="d ' + cls + '" style="' + pos + '" title="' + esc(label) + '"></i>');
       }
     }
-    document.getElementById('heat').innerHTML = cells.join('');
-    document.getElementById('months').innerHTML = months.join('');
+    host.innerHTML = out.join('');
   }
+
+  document.getElementById('years').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-year]');
+    if (!b || b.dataset.year === HEAT_YEAR) return;
+    HEAT_YEAR = b.dataset.year;
+    heatmap(byTitle[document.getElementById('task').value] || []);
+  });
 
   document.getElementById('minocc').addEventListener('input', ranking);
   document.getElementById('task').addEventListener('change', detail);

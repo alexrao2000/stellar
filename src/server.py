@@ -46,7 +46,7 @@ _cache: dict[str, tuple[float, object]] = {}
 # docs_url=None: /docs is served below instead, so that the API reference gets
 # the same sidebar as every other view. FastAPI's own page has no way back to
 # the app, which made the nav's last link a one-way door.
-app = FastAPI(title="task-tracker", docs_url=None)
+app = FastAPI(title="Task Tracker", docs_url=None)
 
 # The history payload is ~1.8 MB of highly repetitive JSON. Compressed it is a
 # fraction of that, which is most of the cold-load cost on any connection
@@ -396,7 +396,7 @@ def _nav(active: str) -> str:
     )
     return (
         '<nav class="sidenav" aria-label="Views">'
-        '<div class="brand">task-tracker</div>' + links + "</nav>"
+        '<div class="brand">Task Tracker</div>' + links + "</nav>"
     )
 
 
@@ -413,7 +413,7 @@ def swagger_docs() -> HTMLResponse:
 
     page = get_swagger_ui_html(
         openapi_url=app.openapi_url,
-        title="task-tracker API",
+        title="Task Tracker API",
         swagger_favicon_url="/favicon.svg",
     ).body.decode()
     # Swagger UI is a complete document, DOCTYPE included. Prepending to it the
@@ -567,22 +567,31 @@ def api_ensure_day(day: str) -> dict:
     can never clobber a completion or a weight already recorded.
     """
     _check_writable(day)
-    client = _sb()
 
-    defs = (
-        client.table("recurring_tasks").select("*").eq("active", True)
-        .order("sort_order").execute().data or []
-    )
+    defs = _recurring_defs()
     if not defs:
         raise HTTPException(500, "recurring_tasks is empty -- apply sql/schema.sql.")
 
-    existing = {(r["list_title"], r["title"]) for r in _day_rows(client, day)}
-    wanted = [
+    due = [
         d for d in defs
-        if (d["list_title"], d["title"]) not in existing
-        and (not d.get("starts_on") or d["starts_on"] <= day)
+        if (not d.get("starts_on") or d["starts_on"] <= day)
         and (not d.get("ends_on") or d["ends_on"] >= day)
     ]
+
+    # The cached history already answers "is this day materialised?", and for
+    # every day that is, the answer is no work. Asking Supabase regardless cost
+    # two round trips -- about 550ms -- on every single day change, which was
+    # most of what made moving between days feel slow.
+    cached = {(r["list_title"], r["title"]) for r in _task_history() if r["day"] == day}
+    if all((d["list_title"], d["title"]) in cached for d in due):
+        return {"day": day, "created": [], "already_present": len(cached)}
+
+    # Something looks absent. Confirm against the database before inserting
+    # rather than trusting the cache: it can lag a write made outside this
+    # process, and a duplicate row is worse than one round trip.
+    client = _sb()
+    existing = {(r["list_title"], r["title"]) for r in _day_rows(client, day)}
+    wanted = [d for d in due if (d["list_title"], d["title"]) not in existing]
     if wanted:
         created = client.table("task_history").insert([
             {
@@ -623,6 +632,22 @@ def api_ensure_range(start: str, end: str) -> dict:
         if result["created"]:
             created[day] = result["created"]
     return {"start": start, "end": end, "days_touched": len(created), "created": created}
+
+
+def _recurring_defs() -> list[dict]:
+    """Active recurrence definitions, cached.
+
+    _sort_order() already caches a projection of this same table; this is the
+    whole row, which materialising needs. Uncached it was a live query on every
+    day change.
+    """
+    def build():
+        return (
+            _sb().table("recurring_tasks").select("*").eq("active", True)
+            .order("sort_order").execute().data or []
+        )
+
+    return _cached("recurring_defs", build)
 
 
 def _sort_order() -> dict[str, int]:
