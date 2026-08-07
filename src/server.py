@@ -772,14 +772,19 @@ def page_today(day: str | None = None) -> str:
 
     from .timezones import resolve_timezone
 
+    tz = ZoneInfo(resolve_timezone(load_config(), allow_google=False))
+    today = datetime.now(tz).date().isoformat()
     if day:
         _check_day(day)
     else:
-        tz = ZoneInfo(resolve_timezone(load_config(), allow_google=False))
-        day = datetime.now(tz).date().isoformat()
+        day = today
     # A day below the write floor still renders -- read-only rather than broken.
+    # `today` and `floor` travel with the page so the client can move between
+    # days on its own: it needs the configured timezone's idea of today, not the
+    # browser's, and it needs to decide writability without asking again.
     return _render("today.html", {
         "day": day,
+        "today": today,
         "writable": date.fromisoformat(day) >= WRITE_FLOOR,
         "floor": WRITE_FLOOR.isoformat(),
     }, active="/")

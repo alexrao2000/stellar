@@ -209,34 +209,149 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   var MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   var WD = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
-  var p = DAY.split('-').map(Number);
-  var d = new Date(Date.UTC(p[0], p[1] - 1, p[2]));
-  document.getElementById('date').textContent =
-    WD[d.getUTCDay()] + ', ' + MO[p[1] - 1] + ' ' + p[2] + ', ' + p[0];
-  document.getElementById('pick').value = DAY;
-
-  /* Navigating reloads the page rather than swapping data in place: whether a
-     day is writable is decided server-side, so the flag has to come with it. */
-  function goto(day) { location.href = '/today?day=' + day; }
-  function shift(n) {
-    var t = Date.UTC(p[0], p[1] - 1, p[2]) + n * 86400000;
-    var x = new Date(t);
-    goto(x.getUTCFullYear() + '-' +
-         String(x.getUTCMonth() + 1).padStart(2, '0') + '-' +
-         String(x.getUTCDate()).padStart(2, '0'));
+  function parts(day) { return day.split('-').map(Number); }
+  function shiftDay(day, n) {
+    var q = parts(day);
+    var x = new Date(Date.UTC(q[0], q[1] - 1, q[2]) + n * 86400000);
+    return x.getUTCFullYear() + '-' +
+      String(x.getUTCMonth() + 1).padStart(2, '0') + '-' +
+      String(x.getUTCDate()).padStart(2, '0');
   }
-  document.getElementById('prev-day').addEventListener('click', function () { shift(-1); });
-  document.getElementById('next-day').addEventListener('click', function () { shift(1); });
+  function daysApart(a, b) {
+    var qa = parts(a), qb = parts(b);
+    return Math.round((Date.UTC(qa[0], qa[1] - 1, qa[2]) -
+                       Date.UTC(qb[0], qb[1] - 1, qb[2])) / 86400000);
+  }
+  /* The floor travels with the page, so writability is decided here rather
+     than fetched -- which is what lets a day change stay client-side. */
+  function writable(day) { return day >= BOOT.floor; }
+
+  function paintHeader(day) {
+    var q = parts(day);
+    var dd = new Date(Date.UTC(q[0], q[1] - 1, q[2]));
+    document.getElementById('date').textContent =
+      WD[dd.getUTCDay()] + ', ' + MO[q[1] - 1] + ' ' + q[2] + ', ' + q[0];
+    document.getElementById('pick').value = day;
+  }
+
+  /* ---- sliding window ---------------------------------------------------
+     Seven days either side of the one on screen, pulled in the background so
+     stepping between them is instant. Strictly read-only: GET /api/day only.
+     Ensuring a day materialises its rows, and doing that for fourteen days
+     nobody asked to look at would write future rows as a side effect of
+     opening the page -- which is exactly what produces a wall of false misses
+     later. Only the day actually opened is ever materialised. */
+  var WINDOW = 7;
+  var CACHE = {};
+  var pending = {};
+  var ensured = {};
+
+  function fetchDay(day) {
+    if (CACHE[day]) return Promise.resolve(CACHE[day]);
+    if (pending[day]) return pending[day];
+    pending[day] = fetch('/api/day/' + day)
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (rows) { delete pending[day]; CACHE[day] = rows; return rows; },
+            function (e) { delete pending[day]; throw e; });
+    return pending[day];
+  }
+
+  function warm(centre) {
+    for (var i = 1; i <= WINDOW; i++) {          // nearest first
+      fetchDay(shiftDay(centre, -i)).catch(function () {});
+      fetchDay(shiftDay(centre, i)).catch(function () {});
+    }
+    Object.keys(CACHE).forEach(function (day) {  // slide: drop what fell out
+      if (Math.abs(daysApart(day, centre)) > WINDOW) delete CACHE[day];
+    });
+  }
+
+  /* The boot gate reveals the page when the network first falls quiet. Firing
+     fourteen prefetches before that would hold it hidden until the last one
+     landed, so the window waits its turn. */
+  function warmWhenIdle(centre) {
+    var root = document.documentElement;
+    if (!root.classList.contains('app-booting')) { warm(centre); return; }
+    var mo = new MutationObserver(function () {
+      if (root.classList.contains('app-booting')) return;
+      mo.disconnect();
+      warm(centre);
+    });
+    mo.observe(root, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  function showDay(day, opts) {
+    opts = opts || {};
+    DAY = day;
+    paintHeader(day);
+    if (!opts.pop) {
+      history[opts.replace ? 'replaceState' : 'pushState'](
+        { day: day }, '', '/today?day=' + day);
+    }
+
+    var ro = !writable(day);
+    document.body.classList.toggle('read-only', ro);
+    ['weight', 'wake'].forEach(function (id) {
+      document.getElementById(id).disabled = ro;
+    });
+    say(ro ? 'Read-only: ' + day + ' is before ' + BOOT.floor +
+             ', the reconciled history.' : '');
+
+    if (CACHE[day]) render(CACHE[day]);          // already warmed: no wait
+
+    return fetchDay(day).then(function (rows) {
+      if (DAY !== day) return;                   // stepped past it while loading
+      render(rows);
+      scheduleEnsure(day);
+      warmWhenIdle(day);
+    }).catch(function (e) { say('Could not load: ' + e.message, true); });
+  }
+
+  /* Materialising is a write, and switching days is now instant, so it waits
+     for the day to be settled on rather than merely passed through. Without
+     this, holding an arrow key would create rows for every day it swept over
+     -- and pre-created future rows are precisely what the calendar shows as a
+     wall of misses later. */
+  var ensureTimer = null;
+  function scheduleEnsure(day) {
+    clearTimeout(ensureTimer);
+    if (!writable(day) || ensured[day]) return;
+    ensureTimer = setTimeout(function () {
+      if (DAY !== day) return;
+      post('/api/day/' + day + '/ensure')
+        .then(function () {
+          ensured[day] = true;
+          delete CACHE[day];                     // it may have added rows
+          return fetchDay(day);
+        })
+        .then(function (rows) { if (DAY === day) render(rows); })
+        .catch(function (e) { say(e.message, true); });
+    }, 400);
+  }
+
+  document.getElementById('prev-day').addEventListener('click', function () {
+    showDay(shiftDay(DAY, -1));
+  });
+  document.getElementById('next-day').addEventListener('click', function () {
+    showDay(shiftDay(DAY, 1));
+  });
   document.getElementById('pick').addEventListener('change', function (e) {
-    if (e.target.value) goto(e.target.value);
+    if (e.target.value) showDay(e.target.value);
   });
   document.getElementById('go-today').addEventListener('click', function () {
-    location.href = '/today';
+    showDay(BOOT.today);
   });
   document.addEventListener('keydown', function (e) {
     if (e.target.tagName === 'INPUT') return;
-    if (e.key === 'ArrowLeft') shift(-1);
-    if (e.key === 'ArrowRight') shift(1);
+    if (e.key === 'ArrowLeft') showDay(shiftDay(DAY, -1));
+    if (e.key === 'ArrowRight') showDay(shiftDay(DAY, 1));
+  });
+  window.addEventListener('popstate', function (e) {
+    var day = (e.state && e.state.day) || BOOT.day;
+    showDay(day, { pop: true });
   });
 
   function esc(s) {
@@ -247,7 +362,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   function say(msg, bad) {
     var el = document.getElementById('status');
     el.textContent = msg;
-    el.className = bad ? 'bad' : 'ok';
+    el.className = !msg ? '' : (bad ? 'bad' : 'ok');
   }
   function setDone(el, done) { el.classList.toggle('done', done); }
 
@@ -280,6 +395,13 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   function render(rows) {
     var host = document.getElementById('tasks');
     host.innerHTML = '';
+    /* Reset before each day. The prefill below only writes when the day has a
+       value, so on a day without one the previous day's reading would sit in
+       the box -- and `saved` would suppress the save that corrects it. */
+    document.getElementById('weight').value = '';
+    document.getElementById('wake').value = '';
+    saved.weight = null;
+    saved.wake = null;
     rows.forEach(function (r) {
       /* These two are readings, not checkboxes. Ticking one by hand would
          claim a measurement that was never taken, so they are resolved by
@@ -353,10 +475,14 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     });
   }
 
+  /* After a write the cached copy of the day is stale, so drop it and let
+     fetchDay repopulate. The rest of the window is untouched. */
   function load() {
-    return fetch('/api/day/' + DAY)
-      .then(function (r) { return r.json(); })
-      .then(render);
+    var day = DAY;
+    delete CACHE[day];
+    return fetchDay(day).then(function (rows) {
+      if (DAY === day) render(rows);
+    });
   }
 
   /* Both fields save themselves. `change` rather than `input`: on a number
@@ -390,21 +516,9 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     function (v) { return '/api/day/' + DAY + '/wake?time=' + encodeURIComponent(v); },
     function (v) { return 'Wake-up saved: ' + v; });
 
-  /* Days before the write floor are the reconciled history: show them, but do
-     not offer to change them. Without this the page hard-failed on any such day
-     rather than simply being read-only. */
-  if (!BOOT.writable) {
-    ['weight', 'wake'].forEach(function (id) {
-      document.getElementById(id).disabled = true;
-    });
-    document.body.classList.add('read-only');
-    load().then(function () {
-      say('Read-only: ' + DAY + ' is before ' + BOOT.floor + ', the reconciled history.');
-    });
-  } else {
-    post('/api/day/' + DAY + '/ensure')
-      .then(load)
-      .catch(function (e) { say('Could not load: ' + e.message, true); });
-  }
+  /* showDay handles read-only, materialising and the window; the first call
+     just points it at the day the server rendered. replace rather than push so
+     the entry the browser already has is not duplicated. */
+  showDay(DAY, { replace: true });
 })();
 </script>
