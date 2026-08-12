@@ -41,7 +41,12 @@ CURRENT_WEIGHT_CLAUSE = re.compile(
 # between refreshes and can be held far longer than the original two minutes.
 # POST /api/refresh forces a re-read.
 CACHE_TTL = 900.0
+# After a refresh fails, keep serving what we have for this long before trying
+# again. Without it a dead network is re-dialled on every single request, and
+# /today now asks for fifteen days at once.
+STALE_RETRY = 30.0
 _cache: dict[str, tuple[float, object]] = {}
+_refresh_failed: dict[str, float] = {}
 
 # docs_url=None: /docs is served below instead, so that the API reference gets
 # the same sidebar as every other view. FastAPI's own page has no way back to
@@ -75,11 +80,32 @@ def _warm_cache() -> None:
 
 
 def _cached(key: str, build):
+    """Read through the cache, and prefer a stale answer to no answer.
+
+    These are reads of data that changes rarely -- the history, the recurrence
+    definitions, their sort order. A momentary DNS failure used to turn the
+    first request after the TTL lapsed into a 500, on the hottest path there
+    is: /api/day goes through _sort_order(), so every fifteen minutes one day
+    view was one blip away from an error page. Writes are deliberately not
+    covered by this; a save that cannot reach the database must still fail.
+    """
+    now = time.monotonic()
     hit = _cache.get(key)
-    if hit and (time.monotonic() - hit[0]) < CACHE_TTL:
+    if hit:
+        if now - hit[0] < CACHE_TTL:
+            return hit[1]
+        if now - _refresh_failed.get(key, float("-inf")) < STALE_RETRY:
+            return hit[1]                     # backing off a failing refresh
+    try:
+        value = build()
+    except Exception as exc:  # noqa: BLE001
+        if hit is None:
+            raise                             # nothing to fall back on
+        _refresh_failed[key] = now
+        log.warning("refresh of %s failed (%s); serving the cached copy", key, exc)
         return hit[1]
-    value = build()
-    _cache[key] = (time.monotonic(), value)
+    _refresh_failed.pop(key, None)
+    _cache[key] = (now, value)
     return value
 
 
@@ -497,6 +523,7 @@ def api_refresh() -> dict:
     hatch for when the database changed underneath us.
     """
     _cache.clear()
+    _refresh_failed.clear()
     return {"ok": True}
 
 
@@ -772,14 +799,19 @@ def page_today(day: str | None = None) -> str:
 
     from .timezones import resolve_timezone
 
+    tz = ZoneInfo(resolve_timezone(load_config(), allow_google=False))
+    today = datetime.now(tz).date().isoformat()
     if day:
         _check_day(day)
     else:
-        tz = ZoneInfo(resolve_timezone(load_config(), allow_google=False))
-        day = datetime.now(tz).date().isoformat()
+        day = today
     # A day below the write floor still renders -- read-only rather than broken.
+    # `today` and `floor` travel with the page so the client can move between
+    # days on its own: it needs the configured timezone's idea of today, not the
+    # browser's, and it needs to decide writability without asking again.
     return _render("today.html", {
         "day": day,
+        "today": today,
         "writable": date.fromisoformat(day) >= WRITE_FLOOR,
         "floor": WRITE_FLOOR.isoformat(),
     }, active="/")
