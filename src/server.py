@@ -196,6 +196,7 @@ NAV_ITEMS = (
     ("/wake", "Wake"),
     ("/consistency", "Consistency"),
     ("/data", "Data"),
+    ("/pool", "Pool"),
     ("/docs", "API"),
 )
 
@@ -884,6 +885,172 @@ def page_data() -> str:
     return _render("data_table.html", {
         "mode": "inline", "data": _task_history(),
     }, active="/data")
+
+
+# --------------------------------------------------------------------------- #
+# The pool -- undated work, drawn as a constellation
+#
+# Writes here are bounded to pool_tasks and pool_edges. They cannot reach
+# task_history, and there is no WRITE_FLOOR because there are no dates to be
+# before: a pool task has no day, which is the whole reason it exists.
+# --------------------------------------------------------------------------- #
+POOL_COLS = ("id", "title", "notes", "x", "y", "created_at", "resolved_at")
+
+
+def _pool_missing(exc: Exception) -> bool:
+    """True when the failure is 'the tables are not there yet'.
+
+    The schema has to be applied by hand in Supabase, so between merging this
+    and running the SQL the page should say so rather than throw a stack trace.
+    """
+    text = str(exc).lower()
+    return "pool_tasks" in text or "pool_edges" in text or "does not exist" in text
+
+
+def _pool_state() -> dict:
+    """Every open star and the edges between them.
+
+    Resolved tasks are dropped rather than returned dim: a resolved star leaves
+    the sky, and keeping them would grow the payload forever. They stay in the
+    table with a resolved_at, so nothing is lost.
+    """
+    client = _sb()
+    tasks = (
+        client.table("pool_tasks").select(",".join(POOL_COLS))
+        .is_("resolved_at", "null").order("id").execute().data or []
+    )
+    for row in tasks:
+        row["x"] = float(row.get("x") or 0.5)
+        row["y"] = float(row.get("y") or 0.5)
+    open_ids = {r["id"] for r in tasks}
+    edges = client.table("pool_edges").select("before_id,after_id").execute().data or []
+    # An edge whose prerequisite is resolved is satisfied, so it stops being
+    # drawn and stops gating. Dropping it here means the page never has to
+    # reason about which end still exists.
+    edges = [e for e in edges
+             if e["before_id"] in open_ids and e["after_id"] in open_ids]
+    return {"tasks": tasks, "edges": edges}
+
+
+@app.get("/api/pool")
+def api_pool() -> dict:
+    try:
+        return _pool_state()
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        if _pool_missing(exc):
+            return {"tasks": [], "edges": [], "schema_missing": True}
+        raise
+
+
+def _clamp01(v: float) -> float:
+    return 0.02 if v < 0.02 else (0.98 if v > 0.98 else float(v))
+
+
+@app.post("/api/pool/task")
+def api_pool_add(title: str, x: float = 0.5, y: float = 0.5, notes: str | None = None) -> dict:
+    title = (title or "").strip()
+    if not title:
+        raise HTTPException(400, "a star needs a name")
+    if len(title) > 200:
+        raise HTTPException(400, "title longer than 200 characters")
+    created = _sb().table("pool_tasks").insert({
+        "title": title, "notes": notes,
+        "x": _clamp01(x), "y": _clamp01(y),
+    }).execute().data or []
+    if not created:
+        raise HTTPException(500, "insert returned nothing")
+    return created[0]
+
+
+@app.post("/api/pool/task/{task_id}/move")
+def api_pool_move(task_id: int, x: float, y: float) -> dict:
+    """Where a star sits. Clamped into the field so nothing can be dragged
+    somewhere it cannot be dragged back from."""
+    updated = (
+        _sb().table("pool_tasks")
+        .update({"x": _clamp01(x), "y": _clamp01(y)})
+        .eq("id", task_id).is_("resolved_at", "null").execute().data or []
+    )
+    if not updated:
+        raise HTTPException(404, f"no open pool task {task_id}")
+    return updated[0]
+
+
+@app.post("/api/pool/task/{task_id}/resolve")
+def api_pool_resolve(task_id: int, done: bool = True) -> dict:
+    """Resolving is allowed even while something it waits on is still open.
+
+    The graph is advice. A hard lock would strand a task whenever a dependency
+    turned out to be wrong, and would need an unlink-to-escape flow to undo.
+    """
+    stamp = datetime.now(timezone.utc).isoformat() if done else None
+    updated = (
+        _sb().table("pool_tasks").update({"resolved_at": stamp})
+        .eq("id", task_id).execute().data or []
+    )
+    if not updated:
+        raise HTTPException(404, f"no pool task {task_id}")
+    return updated[0]
+
+
+def _would_cycle(edges: list[dict], before: int, after: int) -> bool:
+    """Does before -> after close a loop?
+
+    True when `before` is already reachable from `after`. Two tasks each waiting
+    on the other is not a constraint, it is a deadlock -- and since resolving is
+    soft it would be a silent one, a pair of stars dimmed forever with nothing
+    explaining why.
+    """
+    forward: dict[int, list[int]] = {}
+    for e in edges:
+        forward.setdefault(e["before_id"], []).append(e["after_id"])
+    seen, stack = set(), [after]
+    while stack:
+        node = stack.pop()
+        if node == before:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        stack.extend(forward.get(node, []))
+    return False
+
+
+@app.post("/api/pool/link")
+def api_pool_link(before_id: int, after_id: int) -> dict:
+    if before_id == after_id:
+        raise HTTPException(400, "a star cannot wait on itself")
+    client = _sb()
+    edges = client.table("pool_edges").select("before_id,after_id").execute().data or []
+    if any(e["before_id"] == before_id and e["after_id"] == after_id for e in edges):
+        return {"before_id": before_id, "after_id": after_id, "already": True}
+    if _would_cycle(edges, before_id, after_id):
+        raise HTTPException(400, "that link would close a loop")
+    client.table("pool_edges").insert(
+        {"before_id": before_id, "after_id": after_id}).execute()
+    return {"before_id": before_id, "after_id": after_id}
+
+
+@app.post("/api/pool/unlink")
+def api_pool_unlink(before_id: int, after_id: int) -> dict:
+    (
+        _sb().table("pool_edges").delete()
+        .eq("before_id", before_id).eq("after_id", after_id).execute()
+    )
+    return {"before_id": before_id, "after_id": after_id, "removed": True}
+
+
+@app.get("/pool", response_class=HTMLResponse)
+def page_pool() -> str:
+    try:
+        state = _pool_state()
+    except Exception as exc:  # noqa: BLE001
+        if not _pool_missing(exc):
+            raise
+        state = {"tasks": [], "edges": [], "schema_missing": True}
+    return _render("pool.html", {"mode": "inline", **state}, active="/pool")
 
 
 @app.get("/health")

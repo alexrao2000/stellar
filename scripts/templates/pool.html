@@ -1,0 +1,412 @@
+<title>Pool</title>
+<style>
+:root {
+  --void: #04050A;
+  --star: #FFFCF4;
+  --ink-sky: rgba(228,224,242,.74);
+  --ink-faint: rgba(150,146,185,.55);
+  --line: rgba(214,222,255,.17);
+  --line-live: rgba(196,178,255,.55);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-sky);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+
+/* The pool owns the whole field, so the page furniture the other views use --
+   a centred column, a card, a heading -- would only get in the way of it. */
+.sky {
+  position: fixed; inset: 0 0 0 var(--nav-w); overflow: hidden; touch-action: none;
+  background:
+    radial-gradient(1400px 900px at 78% 8%,  rgba(70,84,150,.16), transparent 62%),
+    radial-gradient(1100px 800px at 12% 92%, rgba(120,80,190,.10), transparent 62%),
+    radial-gradient(700px 500px at 45% 55%,  rgba(180,150,255,.045), transparent 70%),
+    var(--void);
+}
+@media (max-width: 760px) { .sky { inset: 0; } }
+.sky canvas, .sky svg { position: absolute; inset: 0; }
+.sky svg { pointer-events: none; }
+
+.star { position: absolute; transform: translate(-50%, -50%); cursor: grab; }
+.star.held { cursor: grabbing; }
+.star .hit {
+  position: absolute; left: 50%; top: 50%; width: 42px; height: 42px;
+  transform: translate(-50%, -50%); border-radius: 50%;
+}
+/* Annotated the way a chart annotates a star -- offset, small, tracked --
+   rather than centred underneath the way a graph names a node. Uppercase
+   because it has to read as a label and not as a proper noun, and because it
+   is the type the rest of the app already uses for labels. */
+.star .name {
+  position: absolute; left: 15px; bottom: 9px; white-space: nowrap;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 9.5px; letter-spacing: .19em; text-transform: uppercase;
+  color: var(--ink-sky); text-shadow: 0 1px 8px var(--void), 0 0 3px var(--void);
+  pointer-events: none; user-select: none;
+}
+.star .waiting {
+  position: absolute; left: 15px; bottom: -4px; white-space: nowrap;
+  font-family: ui-monospace, Menlo, monospace; font-size: 8.5px;
+  letter-spacing: .16em; color: rgba(150,146,180,.42);
+  pointer-events: none; user-select: none;
+}
+.star.dim .name { color: rgba(190,186,214,.34); }
+/* After .dim, so it wins on source order where the two would otherwise tie. */
+.star.flip .name, .star.flip .waiting { left: auto; right: 15px; text-align: right; }
+.star.linking .name { color: var(--line-live); }
+
+.hud {
+  position: absolute; left: 26px; top: 20px; z-index: 3;
+  font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+  letter-spacing: .22em; text-transform: uppercase; color: var(--ink-faint);
+}
+.key {
+  position: absolute; left: 26px; bottom: 20px; z-index: 3; line-height: 1.9;
+  font-family: ui-monospace, Menlo, monospace; font-size: 9.5px;
+  letter-spacing: .13em; color: rgba(120,116,150,.5);
+}
+#note {
+  position: absolute; left: 26px; top: 44px; z-index: 3; min-height: 1.2em;
+  font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+  letter-spacing: .1em; color: rgba(196,178,255,.8);
+}
+#note.bad { color: #E3806B; }
+
+.new {
+  position: absolute; right: 26px; top: 18px; z-index: 3; display: flex; gap: 8px;
+}
+.new input {
+  width: 232px; font: inherit; font-size: .82rem; padding: 8px 11px;
+  border-radius: 8px; border: 1px solid rgba(150,146,200,.28);
+  background: rgba(255,255,255,.04); color: var(--ink-sky);
+  font-family: ui-monospace, Menlo, monospace;
+}
+.new input::placeholder { color: rgba(150,146,185,.45); }
+.new input:focus { outline: none; border-color: var(--line-live); }
+@media (max-width: 760px) { .new { right: 14px; } .new input { width: 150px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="sky" id="sky">
+  <canvas id="dust"></canvas>
+  <svg id="lines"></svg>
+  <div class="hud" id="hud">Pool</div>
+  <div id="note"></div>
+  <div class="new">
+    <input id="add" type="text" placeholder="name a star, press enter" maxlength="200"
+           aria-label="Add a task to the pool">
+  </div>
+  <div class="key">
+    drag to move &nbsp;&middot;&nbsp; drag one star onto another to link
+    &nbsp;&middot;&nbsp; click to resolve<br>
+    unlit = waiting on something else, and still resolvable
+  </div>
+</div>
+
+<script id="bootstrap" type="application/json">__BOOTSTRAP__</script>
+<script>
+(function () {
+  var BOOT = JSON.parse(document.getElementById('bootstrap').textContent);
+  var TASKS = BOOT.tasks || [];
+  var EDGES = BOOT.edges || [];
+
+  var sky = document.getElementById('sky');
+  var svg = document.getElementById('lines');
+  var noteEl = document.getElementById('note');
+  var W = 0, H = 0;
+
+  function note(msg, bad) {
+    noteEl.textContent = msg || '';
+    noteEl.className = bad ? 'bad' : '';
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function post(url) {
+    return fetch(url, { method: 'POST' }).then(function (res) {
+      if (res.ok) return res.json();
+      return res.json().catch(function () { return {}; }).then(function (j) {
+        throw new Error(j.detail || ('HTTP ' + res.status));
+      });
+    });
+  }
+
+  if (BOOT.schema_missing) {
+    note('pool tables not created yet — apply sql/schema.sql in Supabase', true);
+  }
+
+  /* ---- the field ------------------------------------------------------- */
+  var dust = document.getElementById('dust'), g = dust.getContext('2d');
+
+  /* Three layers rather than one field of identical specks: the far layer
+     dense and nearly invisible, the near layer sparse and brighter. That
+     difference is what reads as depth. Seeded, so the sky does not reshuffle
+     itself on every resize. */
+  function drawDust() {
+    var dpr = window.devicePixelRatio || 1;
+    dust.width = W * dpr; dust.height = H * dpr;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    var seed = 21;
+    function rnd() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+    [[900, .34, .45], [320, .55, .8], [90, .8, 1.35]].forEach(function (L) {
+      for (var i = 0; i < L[0]; i++) {
+        var a = rnd() * L[1] + .04, r = rnd() * L[2] + .16;
+        g.beginPath();
+        g.arc(rnd() * W, rnd() * H, r, 0, 6.283);
+        g.fillStyle = 'rgba(232,236,255,' + a.toFixed(3) + ')';
+        g.fill();
+      }
+    });
+  }
+
+  /* ---- model ----------------------------------------------------------- */
+  var byId = {};
+  function reindex() {
+    byId = {};
+    TASKS.forEach(function (t) { byId[t.id] = t; });
+  }
+  function prereqsOf(id) {
+    return EDGES.filter(function (e) { return e.after_id === id; })
+                .map(function (e) { return e.before_id; })
+                .filter(function (b) { return byId[b]; });
+  }
+  /* Magnitude carries age: the longer something has sat in the pool unresolved,
+     the brighter it burns. It is the one property worth encoding, and it costs
+     nothing to read. */
+  function magnitude(t) {
+    if (!t.created_at) return 1.4;
+    var days = (Date.now() - Date.parse(t.created_at)) / 86400000;
+    if (!isFinite(days) || days < 0) days = 0;
+    return 1.0 + Math.min(days / 45, 1) * 1.5;
+  }
+
+  /* ---- painting -------------------------------------------------------- */
+  function starSVG(id, m) {
+    var core = 1.5 + m * 1.15, bloom = 7 + m * 7, spike = 9 + m * 9;
+    var s = '<svg width="90" height="90" viewBox="-45 -45 90 90" ' +
+      'style="display:block;transform:translate(-45px,-45px);pointer-events:none">';
+    s += '<defs><radialGradient id="bl' + id + '">' +
+         '<stop offset="0%" stop-color="rgba(255,252,245,.85)"/>' +
+         '<stop offset="38%" stop-color="rgba(206,214,255,.20)"/>' +
+         '<stop offset="100%" stop-color="rgba(150,170,255,0)"/>' +
+         '</radialGradient></defs>';
+    s += '<circle cx="0" cy="0" r="' + bloom + '" fill="url(#bl' + id + ')"/>';
+    if (m > 1.4) {
+      s += '<path d="M' + -spike + ' 0 H' + spike + ' M0 ' + -spike + ' V' + spike +
+           '" stroke="rgba(255,250,240,' + (0.10 + m * 0.055).toFixed(2) +
+           ')" stroke-width="0.8" stroke-linecap="round"/>';
+    }
+    s += '<circle cx="0" cy="0" r="' + core.toFixed(2) + '" fill="var(--star)"/></svg>';
+    return s;
+  }
+
+  function unlitSVG() {
+    return '<svg width="26" height="26" viewBox="0 0 26 26" ' +
+      'style="display:block;transform:translate(-13px,-13px);pointer-events:none">' +
+      '<circle cx="13" cy="13" r="4.2" fill="none" ' +
+      'stroke="rgba(196,200,235,.42)" stroke-width="0.9"/></svg>';
+  }
+
+  function paint() {
+    reindex();
+    Array.prototype.forEach.call(sky.querySelectorAll('.star'), function (n) { n.remove(); });
+
+    TASKS.forEach(function (t) {
+      var waits = prereqsOf(t.id);
+      var el = document.createElement('div');
+      el.className = 'star' + (waits.length ? ' dim' : '') + (t.x > .74 ? ' flip' : '');
+      el.dataset.id = t.id;
+      el.style.left = (t.x * W) + 'px';
+      el.style.top = (t.y * H) + 'px';
+      el.innerHTML =
+        (waits.length ? unlitSVG() : starSVG(t.id, magnitude(t))) +
+        '<div class="hit"></div>' +
+        '<div class="name">' + esc(t.title) + '</div>' +
+        (waits.length ? '<div class="waiting">waiting on ' + waits.length + '</div>' : '');
+      el.title = waits.length
+        ? 'waiting on ' + waits.map(function (b) { return byId[b].title; }).join(', ')
+        : t.title;
+      sky.appendChild(el);
+    });
+
+    drawLines();
+    var waiting = TASKS.filter(function (t) { return prereqsOf(t.id).length; }).length;
+    document.getElementById('hud').innerHTML =
+      'Pool &nbsp;&middot;&nbsp; ' + TASKS.length + ' open' +
+      (waiting ? ' &nbsp;&middot;&nbsp; ' + waiting + ' waiting' : '');
+  }
+
+  /* Thin, solid, stopping short of both stars. Dashes and mid-line arrowheads
+     are graph-diagram furniture; a chart just joins the stars, and direction
+     is carried by which end is lit. */
+  function drawLines(live) {
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    var out = '';
+    EDGES.forEach(function (e) {
+      var a = byId[e.before_id], b = byId[e.after_id];
+      if (!a || !b) return;
+      var ax = a.x * W, ay = a.y * H, bx = b.x * W, by = b.y * H;
+      var dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
+      var pad = 13 / L;
+      out += '<line x1="' + (ax + dx * pad) + '" y1="' + (ay + dy * pad) +
+             '" x2="' + (bx - dx * pad) + '" y2="' + (by - dy * pad) +
+             '" stroke="var(--line)" stroke-width="0.7"/>';
+    });
+    if (live) {
+      out += '<line x1="' + live.x1 + '" y1="' + live.y1 + '" x2="' + live.x2 +
+             '" y2="' + live.y2 + '" stroke="var(--line-live)" stroke-width="0.9" ' +
+             'stroke-dasharray="2 4"/>';
+    }
+    svg.innerHTML = out;
+  }
+
+  function resize() {
+    var r = sky.getBoundingClientRect();
+    W = r.width; H = r.height;
+    drawDust();
+    paint();
+  }
+
+  /* ---- dragging: move, or link ----------------------------------------- */
+  var drag = null;
+
+  sky.addEventListener('pointerdown', function (e) {
+    var el = e.target.closest ? e.target.closest('.star') : null;
+    if (!el) return;
+    var t = byId[el.dataset.id];
+    if (!t) return;
+    el.setPointerCapture(e.pointerId);
+    el.classList.add('held');
+    drag = { el: el, t: t, id: e.pointerId, moved: false,
+             ox: e.clientX, oy: e.clientY, sx: t.x, sy: t.y };
+    e.preventDefault();
+  });
+
+  sky.addEventListener('pointermove', function (e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    var dx = e.clientX - drag.ox, dy = e.clientY - drag.oy;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;   // a click, not a drag
+    drag.moved = true;
+
+    var r = sky.getBoundingClientRect();
+    var over = document.elementFromPoint(e.clientX, e.clientY);
+    var onto = over && over.closest ? over.closest('.star') : null;
+    if (onto === drag.el) onto = null;
+
+    if (onto) {
+      /* Held over another star: this is a link, not a move. Snap the ghost
+         line to the target and leave the dragged star where it was. */
+      drag.onto = byId[onto.dataset.id];
+      drag.el.classList.add('linking');
+      drag.el.style.left = (drag.sx * W) + 'px';
+      drag.el.style.top = (drag.sy * H) + 'px';
+      drawLines({ x1: drag.sx * W, y1: drag.sy * H,
+                  x2: drag.onto.x * W, y2: drag.onto.y * H });
+      note('link: ' + drag.t.title + ' before ' + drag.onto.title);
+    } else {
+      drag.onto = null;
+      drag.el.classList.remove('linking');
+      drag.t.x = Math.min(Math.max((e.clientX - r.left) / W, 0.02), 0.98);
+      drag.t.y = Math.min(Math.max((e.clientY - r.top) / H, 0.02), 0.98);
+      drag.el.style.left = (drag.t.x * W) + 'px';
+      drag.el.style.top = (drag.t.y * H) + 'px';
+      drag.el.classList.toggle('flip', drag.t.x > .74);
+      drawLines({ x1: drag.t.x * W, y1: drag.t.y * H,
+                  x2: drag.t.x * W, y2: drag.t.y * H });
+      note('');
+    }
+  });
+
+  function endDrag(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    var d = drag; drag = null;
+    d.el.classList.remove('held', 'linking');
+
+    if (!d.moved) { resolve(d.t); return; }          // a click resolves
+
+    if (d.onto) {
+      var before = d.t.id, after = d.onto.id;
+      post('/api/pool/link?before_id=' + before + '&after_id=' + after)
+        .then(function (r) {
+          if (!r.already) EDGES.push({ before_id: before, after_id: after });
+          note(r.already ? 'already linked' : d.t.title + ' now comes first');
+          paint();
+        })
+        .catch(function (err) { note(err.message, true); paint(); });
+      return;
+    }
+
+    /* Position is written on drop, not while dragging: one row, one write. */
+    post('/api/pool/task/' + d.t.id + '/move?x=' + d.t.x.toFixed(4) +
+         '&y=' + d.t.y.toFixed(4))
+      .catch(function (err) {
+        d.t.x = d.sx; d.t.y = d.sy;                  // put it back
+        note(err.message, true);
+        paint();
+      });
+    drawLines();
+  }
+  sky.addEventListener('pointerup', endDrag);
+  sky.addEventListener('pointercancel', endDrag);
+
+  function resolve(t) {
+    var waits = prereqsOf(t.id);
+    post('/api/pool/task/' + t.id + '/resolve?done=true')
+      .then(function () {
+        TASKS = TASKS.filter(function (x) { return x.id !== t.id; });
+        reindex();
+        EDGES = EDGES.filter(function (e) {
+          return byId[e.before_id] && byId[e.after_id];
+        });
+        note(waits.length
+          ? t.title + ' resolved, ahead of ' +
+            waits.map(function (b) { return b; }).length + ' it was waiting on'
+          : t.title + ' resolved');
+        paint();
+      })
+      .catch(function (err) { note(err.message, true); });
+  }
+
+  /* ---- adding ---------------------------------------------------------- */
+  document.getElementById('add').addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    var title = this.value.trim();
+    if (!title) return;
+    var self = this;
+    self.disabled = true;
+    /* New stars land somewhere empty-ish rather than on top of an existing
+       one: the sky is mostly empty, so a few tries is enough. */
+    var spot = freeSpot();
+    post('/api/pool/task?title=' + encodeURIComponent(title) +
+         '&x=' + spot.x.toFixed(4) + '&y=' + spot.y.toFixed(4))
+      .then(function (row) {
+        row.x = Number(row.x); row.y = Number(row.y);
+        TASKS.push(row);
+        self.value = '';
+        note(title + ' added');
+        paint();
+      })
+      .catch(function (err) { note(err.message, true); })
+      .then(function () { self.disabled = false; self.focus(); });
+  });
+
+  function freeSpot() {
+    var best = { x: 0.5, y: 0.5 }, bestGap = -1;
+    for (var i = 0; i < 40; i++) {
+      var c = { x: 0.12 + Math.random() * 0.76, y: 0.14 + Math.random() * 0.68 };
+      var gap = Infinity;
+      TASKS.forEach(function (t) {
+        gap = Math.min(gap, Math.hypot(t.x - c.x, t.y - c.y));
+      });
+      if (gap > bestGap) { bestGap = gap; best = c; }
+      if (bestGap > 0.18) break;
+    }
+    return best;
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+})();
+</script>
