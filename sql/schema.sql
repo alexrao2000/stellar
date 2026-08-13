@@ -129,3 +129,42 @@ create policy "anon reads task_history"
     on public.task_history for select to anon using (true);
 
 revoke insert, update, delete, truncate on public.task_history from anon, authenticated;
+
+-- --------------------------------------------------------------------------
+-- The pool: non-recurring, undated work, drawn as a constellation.
+--
+-- Separate tables rather than a nullable task_history.day. That column is NOT
+-- NULL and part of the unique key (day, list_title, title); undated tasks have
+-- no honest value for it. The 38 non-recurring rows already in task_history
+-- prove the point -- 32 of them share 2026-07-14, which is when the sync ran,
+-- not when anything was due.
+--
+-- task_history is the reconciled historical record and stays exactly as it is.
+-- scripts/seed_pool.py copies the still-open ones in here; it never writes back.
+create table if not exists public.pool_tasks (
+    id          bigserial primary key,
+    title       text not null,
+    notes       text,
+    -- Fractions of the field, not pixels: a constellation arranged on a laptop
+    -- has to still read on a phone.
+    x           real not null default 0.5,
+    y           real not null default 0.5,
+    created_at  timestamptz default now(),
+    resolved_at timestamptz                     -- null while still open
+);
+
+create index if not exists idx_pool_tasks_open
+    on public.pool_tasks(resolved_at) where resolved_at is null;
+
+-- A directed edge: before_id must happen before after_id. Cycles are rejected
+-- in the API rather than here -- Postgres has no cheap way to express "this
+-- insert must not close a loop", and the check needs the whole edge set.
+create table if not exists public.pool_edges (
+    before_id bigint not null references public.pool_tasks(id) on delete cascade,
+    after_id  bigint not null references public.pool_tasks(id) on delete cascade,
+    primary key (before_id, after_id),
+    constraint pool_edges_no_self_link check (before_id <> after_id)
+);
+
+alter table public.pool_tasks enable row level security;
+alter table public.pool_edges enable row level security;
