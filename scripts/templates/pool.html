@@ -1,6 +1,17 @@
 <title>Pool</title>
 <style>
 :root {
+  /* The sidebar's palette, stated here rather than inherited. _NAV_CSS ships a
+     light fallback for pages that bring none, and the sky is dark whatever the
+     OS is set to -- in light mode that fallback painted a white column against
+     black. A plain :root beats both the fallback and its dark media block on
+     source order, so this holds in either theme. */
+  --surface: #0A0B12;
+  --surface-2: #161822;
+  --rule: #1C1F2B;
+  --ink: #E4E0F2;
+  --ink-muted: rgba(154,150,190,.78);
+
   --void: #04050A;
   --star: #FFFCF4;
   --ink-sky: rgba(228,224,242,.74);
