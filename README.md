@@ -181,7 +181,6 @@ make import-takeout FILE=take.zip  # Backfill full history from a Takeout export
 make migrate-supabase              # Copy local SQLite data into Supabase
 make dev                           # Run the app locally: check-in, calendar, weight chart
 make keepalive                     # Ping Supabase so the free project stays active
-make restore-task ARGS="..."       # Un-delete / re-date a Google Task in place (dry run by default)
 make install-scheduler             # Install local launchd job (optional)
 make help                          # List targets
 ```
@@ -205,31 +204,6 @@ the browser. Days before `WRITE_FLOOR` (`src/server.py`) are read-only.
 
 Each new day materialises itself on load from `recurring_tasks` — that table is
 what replaces Google's recurrence, which its API neither exposes nor can create.
-
-## Recovering a deleted task
-
-Google **soft**-deletes tasks: `tasks.delete` flips a `deleted` flag and the record keeps
-its id, title, notes and due date. The sync passes `showDeleted=False` so those never reach
-the database, but they are still there and can be restored *in place* rather than recreated:
-
-```bash
-# Dry run first -- prints before/after, writes nothing
-make restore-task ARGS="--task-id TASK_ID --undelete --due 2026-07-29"
-# Commit it
-make restore-task ARGS="--task-id TASK_ID --undelete --due 2026-07-29 --apply"
-```
-
-This needs read-write Tasks scope, which the sync deliberately does not have. The first run
-opens a browser consent flow and caches the write token separately in `token_rw.json`
-(gitignored), so the read-only token used by the sync and CI is never upgraded in place.
-
-**Always run the dry form first and read its output.** `--apply` is never the
-first command. A Google Tasks write cannot be previewed by the API or undone.
-
-Note that the Tasks API exposes **no recurrence data at all** — no series id, no parent
-pointer. Occurrences of a recurring task are related only by sharing a title, and this
-project buckets them by title plus due date. So restoring in place isn't needed to keep an
-occurrence "in the series"; it matters because it preserves the original id and notes.
 
 ## Notes / customization
 

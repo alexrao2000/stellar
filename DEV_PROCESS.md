@@ -128,8 +128,8 @@ Ordered by how much damage each was doing.
 
 ## What was built
 
-**Recovery tooling** (`scripts/`) — all read-only against Google and Supabase
-except `load_task_history.py`:
+**Recovery tooling** (`scripts/archive/`) — retained as a historical record,
+not part of the supported workflow:
 
 - `parse_takeout_status.py` — per-day completion status from a Takeout export
 - `build_reconciled_export.py` — the merge; Takeout base + Supabase weights
