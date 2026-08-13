@@ -1034,6 +1034,25 @@ def _would_cycle(edges: list[dict], before: int, after: int) -> bool:
     return False
 
 
+@app.delete("/api/pool/task/{task_id}")
+def api_pool_delete(task_id: int) -> dict:
+    """Remove a star outright.
+
+    Resolving is for work that happened; this is for a star that should never
+    have existed -- a typo, a duplicate, something that stopped mattering. It is
+    not recoverable, which is why the page puts a confirmation in front of it
+    and keeps the control away from Resolve.
+
+    Edges pointing at it go with it, by the cascade on pool_edges.
+    """
+    removed = (
+        _sb().table("pool_tasks").delete().eq("id", task_id).execute().data or []
+    )
+    if not removed:
+        raise HTTPException(404, f"no pool task {task_id}")
+    return {"id": task_id, "deleted": True, "title": removed[0].get("title")}
+
+
 @app.post("/api/pool/link")
 def api_pool_link(before_id: int, after_id: int) -> dict:
     if before_id == after_id:

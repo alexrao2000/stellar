@@ -165,6 +165,49 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
   color: #EFEAFF; font-weight: 600;
 }
 #panel .acts button:hover { border-color: var(--line-live); }
+/* Deliberately not in the button row. Resolve and Delete sitting shoulder to
+   shoulder is how a mis-tap becomes an unrecoverable one. */
+#panel .danger {
+  display: block; width: 100%; margin-top: 9px; padding: 5px 0;
+  border: none; background: none; cursor: pointer; text-align: center;
+  font-family: ui-monospace, Menlo, monospace; font-size: 8.5px;
+  letter-spacing: .17em; text-transform: uppercase; color: rgba(150,146,185,.45);
+}
+#panel .danger:hover { color: #E3806B; }
+
+#veil {
+  position: absolute; inset: 0; z-index: 8; display: none;
+  background: rgba(4,5,10,.72); backdrop-filter: blur(2px);
+  align-items: center; justify-content: center;
+}
+#veil.open { display: flex; }
+#veil .box {
+  width: 330px; max-width: calc(100% - 32px);
+  background: rgba(12,13,22,.97); border: 1px solid rgba(196,120,110,.34);
+  border-radius: 11px; padding: 18px 18px 15px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.7);
+}
+#veil h3 {
+  margin: 0 0 8px; font-family: ui-monospace, Menlo, monospace;
+  font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+  font-weight: 400; color: #E3806B;
+}
+#veil p { margin: 0 0 6px; font-size: .82rem; line-height: 1.55; color: var(--ink-sky); }
+#veil .loses {
+  margin: 8px 0 0; font-family: ui-monospace, Menlo, monospace; font-size: .72rem;
+  line-height: 1.7; color: rgba(150,146,185,.7);
+}
+#veil .vacts { display: flex; gap: 9px; margin-top: 16px; }
+#veil .vacts button {
+  flex: 1; font: inherit; font-size: .8rem; padding: 9px 10px; cursor: pointer;
+  border-radius: 7px; border: 1px solid rgba(150,146,200,.24);
+  background: rgba(255,255,255,.04); color: var(--ink-sky);
+}
+#veil .vacts button.wreck {
+  background: rgba(190,72,56,.28); border-color: rgba(226,120,104,.5);
+  color: #FFD9D1; font-weight: 600;
+}
+#veil .vacts button:focus-visible { outline: 2px solid var(--line-live); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
@@ -178,6 +221,8 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
            aria-label="Add a task to the pool">
   </div>
   <div id="panel"></div>
+  <div id="veil"><div class="box" role="alertdialog" aria-modal="true"
+       aria-labelledby="veilh"></div></div>
   <div class="key">
     drag to move &nbsp;&middot;&nbsp; drag one star onto another to link
     &nbsp;&middot;&nbsp; click to open it<br>
@@ -195,6 +240,8 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
   var sky = document.getElementById('sky');
   var svg = document.getElementById('lines');
   var noteEl = document.getElementById('note');
+  var panelEl = document.getElementById('panel');
+  var veil = document.getElementById('veil');
   var W = 0, H = 0;
 
   function note(msg, bad) {
@@ -206,8 +253,8 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
-  function post(url) {
-    return fetch(url, { method: 'POST' }).then(function (res) {
+  function post(url, method) {
+    return fetch(url, { method: method || 'POST' }).then(function (res) {
       if (res.ok) return res.json();
       return res.json().catch(function () { return {}; }).then(function (j) {
         throw new Error(j.detail || ('HTTP ' + res.status));
@@ -467,17 +514,24 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
   sky.addEventListener('pointerup', endDrag);
   sky.addEventListener('pointercancel', endDrag);
 
+  veil.addEventListener('pointerdown', function (e) {
+    if (e.target === veil) closeVeil();          // backdrop only
+  });
+
   sky.addEventListener('pointerdown', function (e) {
-    if (e.target.closest && (e.target.closest('.star') || e.target.closest('#panel'))) return;
+    if (!e.target.closest) return;
+    if (e.target.closest('.star') || e.target.closest('#panel') ||
+        e.target.closest('#veil')) return;
     closePanel();
   });
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') closePanel();
+    if (e.key !== 'Escape') return;
+    if (veil.classList.contains('open')) { closeVeil(); return; }
+    closePanel();
   });
 
   /* ---- the panel ------------------------------------------------------- */
   var PANEL_ID = null;
-  var panelEl = document.getElementById('panel');
 
   function closePanel() {
     PANEL_ID = null;
@@ -515,7 +569,8 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
 
     html += '<div class="acts">' +
       '<button class="primary" id="ptoggle">' + (done ? 'Restore' : 'Resolve') + '</button>' +
-      '<button id="pclose">Close</button></div>';
+      '<button id="pclose">Close</button></div>' +
+      '<button class="danger" id="pdelete">delete this star</button>';
     panelEl.innerHTML = html;
     panelEl.className = 'open';
 
@@ -530,6 +585,9 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
     panelEl.style.top = top + 'px';
 
     document.getElementById('pclose').addEventListener('click', closePanel);
+    document.getElementById('pdelete').addEventListener('click', function () {
+      confirmDelete(t);
+    });
     document.getElementById('ptoggle').addEventListener('click', function () {
       setResolved(t, !done);
     });
@@ -554,6 +612,58 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
           })
           .catch(function (err) { note(err.message, true); });
       });
+    });
+  }
+
+  /* ---- deleting ---------------------------------------------------------
+     Resolving is for work that happened. This is for a star that should not
+     exist -- a typo, a duplicate, something that stopped mattering -- and it
+     does not come back, so it says exactly what goes with it first. */
+  function closeVeil() {
+    veil.className = '';
+    veil.querySelector('.box').innerHTML = '';
+  }
+
+  function confirmDelete(t) {
+    var links = EDGES.filter(function (e) {
+      return e.before_id === t.id || e.after_id === t.id;
+    }).length;
+
+    var loses = [];
+    if (links) loses.push(links + (links === 1 ? ' link' : ' links') + ' to other stars');
+    if (t.notes) loses.push('its description');
+
+    veil.querySelector('.box').innerHTML =
+      '<h3 id="veilh">Delete this star</h3>' +
+      '<p>' + esc(t.title) + '</p>' +
+      '<p style="color:rgba(150,146,185,.75);font-size:.76rem">' +
+        'This cannot be undone. Resolving keeps it, and lets it come back.</p>' +
+      (loses.length
+        ? '<div class="loses">goes with it:<br>&nbsp;&nbsp;' +
+          loses.join('<br>&nbsp;&nbsp;') + '</div>'
+        : '') +
+      '<div class="vacts">' +
+        '<button id="vcancel">Cancel</button>' +
+        '<button class="wreck" id="vgo">Delete</button></div>';
+    veil.className = 'open';
+    document.getElementById('vcancel').focus();   // the safe one, not the wreck
+
+    document.getElementById('vcancel').addEventListener('click', closeVeil);
+    document.getElementById('vgo').addEventListener('click', function () {
+      post('/api/pool/task/' + t.id, 'DELETE')
+        .then(function () {
+          TASKS = TASKS.filter(function (x) { return x.id !== t.id; });
+          /* The cascade drops these server-side; mirror it here so the sky does
+             not draw a line to a star that is gone. */
+          EDGES = EDGES.filter(function (e) {
+            return e.before_id !== t.id && e.after_id !== t.id;
+          });
+          note(t.title + ' deleted');
+          closeVeil();
+          closePanel();
+          paint();
+        })
+        .catch(function (err) { note(err.message, true); closeVeil(); });
     });
   }
 
