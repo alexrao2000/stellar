@@ -94,6 +94,77 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
 .new input::placeholder { color: rgba(150,146,185,.45); }
 .new input:focus { outline: none; border-color: var(--line-live); }
 @media (max-width: 760px) { .new { right: 14px; } .new input { width: 150px; } }
+
+/* An ember: what is left where a resolved star was. Visible only while
+   `show resolved` is on, and never gating anything. */
+.star.ember .name { color: rgba(150,146,185,.30); }
+.star.ember .resolvedwhen {
+  position: absolute; left: 15px; bottom: -4px; white-space: nowrap;
+  font-family: ui-monospace, Menlo, monospace; font-size: 8.5px;
+  letter-spacing: .16em; color: rgba(130,126,165,.34);
+  pointer-events: none; user-select: none;
+}
+.star.flip .resolvedwhen { left: auto; right: 15px; text-align: right; }
+
+.toggle {
+  margin-left: 18px; cursor: pointer; user-select: none;
+  color: rgba(140,136,180,.5); border-bottom: 1px dotted rgba(140,136,180,.3);
+}
+.toggle.on { color: rgba(196,178,255,.85); border-bottom-color: rgba(196,178,255,.5); }
+
+/* The panel. Anchored to its star rather than parked at a screen edge, so the
+   thing being described stays next to the description. */
+#panel {
+  position: absolute; z-index: 6; width: 268px; display: none;
+  background: rgba(10,11,20,.94); border: 1px solid rgba(150,146,200,.22);
+  border-radius: 10px; padding: 13px 14px 12px;
+  box-shadow: 0 18px 44px rgba(0,0,0,.6);
+  backdrop-filter: blur(3px);
+}
+#panel.open { display: block; }
+#panel .ptitle {
+  font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+  letter-spacing: .17em; text-transform: uppercase;
+  color: var(--ink-sky); margin-bottom: 3px; word-break: break-word;
+}
+#panel .pmeta {
+  font-family: ui-monospace, Menlo, monospace; font-size: 8.5px;
+  letter-spacing: .12em; color: rgba(140,136,180,.6); margin-bottom: 10px;
+}
+#panel textarea {
+  width: 100%; min-height: 62px; resize: vertical; font: inherit;
+  font-size: .78rem; line-height: 1.5; padding: 8px 9px; border-radius: 7px;
+  border: 1px solid rgba(150,146,200,.2); background: rgba(255,255,255,.035);
+  color: var(--ink-sky); font-family: system-ui, -apple-system, sans-serif;
+}
+#panel textarea::placeholder { color: rgba(150,146,185,.35); }
+#panel textarea:focus { outline: none; border-color: var(--line-live); }
+#panel .waits { margin-top: 10px; }
+#panel .waits h4 {
+  margin: 0 0 5px; font-family: ui-monospace, Menlo, monospace;
+  font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase;
+  font-weight: 400; color: rgba(140,136,180,.6);
+}
+#panel .waits div {
+  display: flex; align-items: center; gap: 8px; padding: 3px 0;
+  font-size: .76rem; color: rgba(214,210,235,.8);
+}
+#panel .waits button {
+  margin-left: auto; border: none; background: none; cursor: pointer;
+  color: rgba(150,146,185,.6); font-size: .9rem; line-height: 1; padding: 2px 4px;
+}
+#panel .waits button:hover { color: #E3806B; }
+#panel .acts { display: flex; gap: 8px; margin-top: 12px; }
+#panel .acts button {
+  flex: 1; font: inherit; font-size: .78rem; padding: 8px 10px; cursor: pointer;
+  border-radius: 7px; border: 1px solid rgba(150,146,200,.24);
+  background: rgba(255,255,255,.04); color: var(--ink-sky);
+}
+#panel .acts button.primary {
+  background: rgba(122,79,216,.30); border-color: rgba(160,130,240,.45);
+  color: #EFEAFF; font-weight: 600;
+}
+#panel .acts button:hover { border-color: var(--line-live); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
@@ -106,9 +177,10 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
     <input id="add" type="text" placeholder="name a star, press enter" maxlength="200"
            aria-label="Add a task to the pool">
   </div>
+  <div id="panel"></div>
   <div class="key">
     drag to move &nbsp;&middot;&nbsp; drag one star onto another to link
-    &nbsp;&middot;&nbsp; click to resolve<br>
+    &nbsp;&middot;&nbsp; click to open it<br>
     unlit = waiting on something else, and still resolvable
   </div>
 </div>
@@ -178,10 +250,18 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
     byId = {};
     TASKS.forEach(function (t) { byId[t.id] = t; });
   }
+  var SHOW_RESOLVED = false;
+  function isOpen(t) { return t && !t.resolved_at; }
+  function visible() {
+    return SHOW_RESOLVED ? TASKS : TASKS.filter(isOpen);
+  }
+  /* Only prerequisites that are still open. With `show resolved` on, byId also
+     holds resolved stars, and a resolved prerequisite is a satisfied one -- it
+     must not gate, or turning the toggle on would dim half the sky. */
   function prereqsOf(id) {
     return EDGES.filter(function (e) { return e.after_id === id; })
                 .map(function (e) { return e.before_id; })
-                .filter(function (b) { return byId[b]; });
+                .filter(function (b) { return isOpen(byId[b]); });
   }
   /* Magnitude carries age: the longer something has sat in the pool unresolved,
      the brighter it burns. It is the one property worth encoding, and it costs
@@ -220,21 +300,32 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
       'stroke="rgba(196,200,235,.42)" stroke-width="0.9"/></svg>';
   }
 
+  /* An ember. Dimmer than an unlit star and filled rather than outlined, so the
+     two never read as the same state: unlit means not yet, ember means done. */
+  function emberSVG() {
+    return '<svg width="26" height="26" viewBox="0 0 26 26" ' +
+      'style="display:block;transform:translate(-13px,-13px);pointer-events:none">' +
+      '<circle cx="13" cy="13" r="2.6" fill="rgba(176,166,214,.30)"/></svg>';
+  }
+
   function paint() {
     reindex();
     Array.prototype.forEach.call(sky.querySelectorAll('.star'), function (n) { n.remove(); });
 
-    TASKS.forEach(function (t) {
-      var waits = prereqsOf(t.id);
+    visible().forEach(function (t) {
+      var done = !isOpen(t);
+      var waits = done ? [] : prereqsOf(t.id);
       var el = document.createElement('div');
-      el.className = 'star' + (waits.length ? ' dim' : '') + (t.x > .74 ? ' flip' : '');
+      el.className = 'star' + (done ? ' ember' : (waits.length ? ' dim' : '')) +
+        (t.x > .74 ? ' flip' : '');
       el.dataset.id = t.id;
       el.style.left = (t.x * W) + 'px';
       el.style.top = (t.y * H) + 'px';
       el.innerHTML =
-        (waits.length ? unlitSVG() : starSVG(t.id, magnitude(t))) +
+        (done ? emberSVG() : (waits.length ? unlitSVG() : starSVG(t.id, magnitude(t)))) +
         '<div class="hit"></div>' +
         '<div class="name">' + esc(t.title) + '</div>' +
+        (done ? '<div class="resolvedwhen">resolved</div>' : '') +
         (waits.length ? '<div class="waiting">waiting on ' + waits.length + '</div>' : '');
       el.title = waits.length
         ? 'waiting on ' + waits.map(function (b) { return byId[b].title; }).join(', ')
@@ -243,10 +334,22 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
     });
 
     drawLines();
-    var waiting = TASKS.filter(function (t) { return prereqsOf(t.id).length; }).length;
+    var open = TASKS.filter(isOpen);
+    var waiting = open.filter(function (t) { return prereqsOf(t.id).length; }).length;
+    var done = TASKS.length - open.length;
     document.getElementById('hud').innerHTML =
-      'Pool &nbsp;&middot;&nbsp; ' + TASKS.length + ' open' +
-      (waiting ? ' &nbsp;&middot;&nbsp; ' + waiting + ' waiting' : '');
+      'Pool &nbsp;&middot;&nbsp; ' + open.length + ' open' +
+      (waiting ? ' &nbsp;&middot;&nbsp; ' + waiting + ' waiting' : '') +
+      (done ? ' &nbsp;&middot;&nbsp; ' + done + ' resolved' +
+        '<span class="toggle' + (SHOW_RESOLVED ? ' on' : '') + '" id="toggle">' +
+        (SHOW_RESOLVED ? 'hide' : 'show') + '</span>' : '');
+    var tg = document.getElementById('toggle');
+    if (tg) tg.addEventListener('click', function () {
+      SHOW_RESOLVED = !SHOW_RESOLVED;
+      closePanel();
+      paint();
+    });
+    if (PANEL_ID && !byId[PANEL_ID]) closePanel();
   }
 
   /* Thin, solid, stopping short of both stars. Dashes and mid-line arrowheads
@@ -255,9 +358,11 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
   function drawLines(live) {
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
     var out = '';
+    var shown = {};
+    visible().forEach(function (t) { shown[t.id] = 1; });
     EDGES.forEach(function (e) {
       var a = byId[e.before_id], b = byId[e.after_id];
-      if (!a || !b) return;
+      if (!a || !b || !shown[a.id] || !shown[b.id]) return;
       var ax = a.x * W, ay = a.y * H, bx = b.x * W, by = b.y * H;
       var dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
       var pad = 13 / L;
@@ -335,7 +440,7 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
     var d = drag; drag = null;
     d.el.classList.remove('held', 'linking');
 
-    if (!d.moved) { resolve(d.t); return; }          // a click resolves
+    if (!d.moved) { openPanel(d.t); return; }        // a click opens it
 
     if (d.onto) {
       var before = d.t.id, after = d.onto.id;
@@ -362,23 +467,113 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
   sky.addEventListener('pointerup', endDrag);
   sky.addEventListener('pointercancel', endDrag);
 
-  function resolve(t) {
-    var waits = prereqsOf(t.id);
-    post('/api/pool/task/' + t.id + '/resolve?done=true')
-      .then(function () {
-        TASKS = TASKS.filter(function (x) { return x.id !== t.id; });
-        reindex();
-        EDGES = EDGES.filter(function (e) {
-          return byId[e.before_id] && byId[e.after_id];
-        });
-        note(waits.length
-          ? t.title + ' resolved, ahead of ' +
-            waits.map(function (b) { return b; }).length + ' it was waiting on'
-          : t.title + ' resolved');
+  sky.addEventListener('pointerdown', function (e) {
+    if (e.target.closest && (e.target.closest('.star') || e.target.closest('#panel'))) return;
+    closePanel();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closePanel();
+  });
+
+  /* ---- the panel ------------------------------------------------------- */
+  var PANEL_ID = null;
+  var panelEl = document.getElementById('panel');
+
+  function closePanel() {
+    PANEL_ID = null;
+    panelEl.className = '';
+    panelEl.innerHTML = '';
+  }
+
+  function openPanel(t) {
+    PANEL_ID = t.id;
+    var done = !isOpen(t);
+    var waits = EDGES.filter(function (e) { return e.after_id === t.id; })
+                     .map(function (e) { return byId[e.before_id]; })
+                     .filter(Boolean);
+    var when = '';
+    if (done && t.resolved_at) {
+      var d = new Date(t.resolved_at);
+      when = isNaN(d) ? 'resolved' : 'resolved ' + d.toISOString().slice(0, 10);
+    } else if (t.created_at) {
+      var c = new Date(t.created_at);
+      when = isNaN(c) ? '' : 'added ' + c.toISOString().slice(0, 10);
+    }
+
+    var html = '<div class="ptitle">' + esc(t.title) + '</div>' +
+      '<div class="pmeta">' + esc(when) + '</div>' +
+      '<textarea id="pnotes" placeholder="what this actually involves">' +
+        esc(t.notes || '') + '</textarea>';
+
+    if (waits.length) {
+      html += '<div class="waits"><h4>waits on</h4>' + waits.map(function (w) {
+        return '<div><span>' + esc(w.title) + '</span>' +
+          (isOpen(w) ? '' : ' <span style="opacity:.5;font-size:.7rem">(resolved)</span>') +
+          '<button data-unlink="' + w.id + '" title="remove this link">&times;</button></div>';
+      }).join('') + '</div>';
+    }
+
+    html += '<div class="acts">' +
+      '<button class="primary" id="ptoggle">' + (done ? 'Restore' : 'Resolve') + '</button>' +
+      '<button id="pclose">Close</button></div>';
+    panelEl.innerHTML = html;
+    panelEl.className = 'open';
+
+    /* Sits beside its star, flipped or nudged so it never leaves the field. */
+    var pw = 268, ph = panelEl.offsetHeight;
+    var left = t.x * W + 22, top = t.y * H - 18;
+    if (left + pw > W - 12) left = t.x * W - pw - 22;
+    if (left < 12) left = 12;
+    if (top + ph > H - 12) top = H - ph - 12;
+    if (top < 12) top = 12;
+    panelEl.style.left = left + 'px';
+    panelEl.style.top = top + 'px';
+
+    document.getElementById('pclose').addEventListener('click', closePanel);
+    document.getElementById('ptoggle').addEventListener('click', function () {
+      setResolved(t, !done);
+    });
+    /* change, not input: saved when you finish rather than per keystroke. */
+    document.getElementById('pnotes').addEventListener('change', function () {
+      var text = this.value;
+      post('/api/pool/task/' + t.id + '/notes?text=' + encodeURIComponent(text))
+        .then(function (row) { t.notes = row.notes; note('description saved'); })
+        .catch(function (err) { note(err.message, true); });
+    });
+    Array.prototype.forEach.call(panelEl.querySelectorAll('[data-unlink]'), function (b) {
+      b.addEventListener('click', function () {
+        var before = Number(b.dataset.unlink);
+        post('/api/pool/unlink?before_id=' + before + '&after_id=' + t.id)
+          .then(function () {
+            EDGES = EDGES.filter(function (e) {
+              return !(e.before_id === before && e.after_id === t.id);
+            });
+            note('unlinked');
+            paint();
+            openPanel(t);
+          })
+          .catch(function (err) { note(err.message, true); });
+      });
+    });
+  }
+
+  function setResolved(t, done) {
+    var waits = done ? prereqsOf(t.id) : [];
+    post('/api/pool/task/' + t.id + '/resolve?done=' + done)
+      .then(function (row) {
+        t.resolved_at = row.resolved_at;
+        note(done
+          ? (waits.length
+              ? t.title + ' resolved, ahead of ' + waits.length + ' it was waiting on'
+              : t.title + ' resolved')
+          : t.title + ' restored');
+        /* A resolved star only stays on screen while the toggle is on. */
+        if (done && !SHOW_RESOLVED) closePanel(); else openPanel(t);
         paint();
       })
       .catch(function (err) { note(err.message, true); });
   }
+
 
   /* ---- adding ---------------------------------------------------------- */
   document.getElementById('add').addEventListener('keydown', function (e) {

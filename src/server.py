@@ -907,41 +907,57 @@ def _pool_missing(exc: Exception) -> bool:
     return "pool_tasks" in text or "pool_edges" in text or "does not exist" in text
 
 
-def _pool_state() -> dict:
-    """Every open star and the edges between them.
+def _pool_state(include_resolved: bool = False) -> dict:
+    """The stars and the edges between them.
 
-    Resolved tasks are dropped rather than returned dim: a resolved star leaves
-    the sky, and keeping them would grow the payload forever. They stay in the
-    table with a resolved_at, so nothing is lost.
+    Resolved ones are left out by default -- a resolved star leaves the sky, and
+    returning them always would grow the payload without end. They keep their
+    row and their resolved_at, so `show resolved` can bring them back as embers
+    and nothing is ever lost.
     """
     client = _sb()
-    tasks = (
-        client.table("pool_tasks").select(",".join(POOL_COLS))
-        .is_("resolved_at", "null").order("id").execute().data or []
-    )
+    query = client.table("pool_tasks").select(",".join(POOL_COLS))
+    if not include_resolved:
+        query = query.is_("resolved_at", "null")
+    tasks = query.order("id").execute().data or []
     for row in tasks:
         row["x"] = float(row.get("x") or 0.5)
         row["y"] = float(row.get("y") or 0.5)
-    open_ids = {r["id"] for r in tasks}
+    present = {r["id"] for r in tasks}
     edges = client.table("pool_edges").select("before_id,after_id").execute().data or []
-    # An edge whose prerequisite is resolved is satisfied, so it stops being
-    # drawn and stops gating. Dropping it here means the page never has to
-    # reason about which end still exists.
+    # Only edges whose ends are both in this payload; the page cannot draw a
+    # line to a star it was not given. Whether a *resolved* prerequisite still
+    # gates is a separate question, and the answer is no -- decided on the page,
+    # where the resolved flag is already to hand.
     edges = [e for e in edges
-             if e["before_id"] in open_ids and e["after_id"] in open_ids]
+             if e["before_id"] in present and e["after_id"] in present]
     return {"tasks": tasks, "edges": edges}
 
 
 @app.get("/api/pool")
-def api_pool() -> dict:
+def api_pool(resolved: bool = False) -> dict:
     try:
-        return _pool_state()
+        return _pool_state(include_resolved=resolved)
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
         if _pool_missing(exc):
             return {"tasks": [], "edges": [], "schema_missing": True}
         raise
+
+
+@app.post("/api/pool/task/{task_id}/notes")
+def api_pool_notes(task_id: int, text: str = "") -> dict:
+    """The description behind a star. Empty clears it rather than storing ''."""
+    if len(text) > 4000:
+        raise HTTPException(400, "description longer than 4000 characters")
+    updated = (
+        _sb().table("pool_tasks").update({"notes": text.strip() or None})
+        .eq("id", task_id).execute().data or []
+    )
+    if not updated:
+        raise HTTPException(404, f"no pool task {task_id}")
+    return updated[0]
 
 
 def _clamp01(v: float) -> float:
@@ -1045,7 +1061,7 @@ def api_pool_unlink(before_id: int, after_id: int) -> dict:
 @app.get("/pool", response_class=HTMLResponse)
 def page_pool() -> str:
     try:
-        state = _pool_state()
+        state = _pool_state(include_resolved=True)
     except Exception as exc:  # noqa: BLE001
         if not _pool_missing(exc):
             raise
