@@ -39,8 +39,10 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
 
 .star { position: absolute; transform: translate(-50%, -50%); cursor: grab; }
 .star.held { cursor: grabbing; }
+/* Generous, and deliberately so. Empty sky now creates a star, which only
+   works if hitting a star is easy -- the two changes hold each other up. */
 .star .hit {
-  position: absolute; left: 50%; top: 50%; width: 42px; height: 42px;
+  position: absolute; left: 50%; top: 50%; width: 66px; height: 66px;
   transform: translate(-50%, -50%); border-radius: 50%;
 }
 /* Annotated the way a chart annotates a star -- offset, small, tracked --
@@ -52,7 +54,7 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 9.5px; letter-spacing: .19em; text-transform: uppercase;
   color: var(--ink-sky); text-shadow: 0 1px 8px var(--void), 0 0 3px var(--void);
-  pointer-events: none; user-select: none;
+  user-select: none;                 /* clickable: it is half the target */
 }
 .star .waiting {
   position: absolute; left: 15px; bottom: -4px; white-space: nowrap;
@@ -208,6 +210,20 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
   color: #FFD9D1; font-weight: 600;
 }
 #veil .vacts button:focus-visible { outline: 2px solid var(--line-live); outline-offset: 1px; }
+
+/* A star being named. It exists on screen and nowhere else -- nothing is
+   written until it has a name, so a stray click costs nothing. */
+.star.ghost { cursor: default; }
+.star.ghost input {
+  position: absolute; left: 15px; bottom: 4px; width: 178px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 9.5px; letter-spacing: .19em; text-transform: uppercase;
+  color: var(--star); background: rgba(255,255,255,.05);
+  border: none; border-bottom: 1px solid var(--line-live);
+  padding: 3px 4px; outline: none;
+}
+.star.ghost.flip input { left: auto; right: 15px; text-align: right; }
+.star.ghost input::placeholder { color: rgba(150,146,185,.4); letter-spacing: .14em; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
@@ -224,8 +240,9 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
   <div id="veil"><div class="box" role="alertdialog" aria-modal="true"
        aria-labelledby="veilh"></div></div>
   <div class="key">
-    drag to move &nbsp;&middot;&nbsp; drag one star onto another to link
-    &nbsp;&middot;&nbsp; click to open it<br>
+    click empty sky to add &nbsp;&middot;&nbsp; drag to move
+    &nbsp;&middot;&nbsp; drag one star onto another to link
+    &nbsp;&middot;&nbsp; click a star to open it<br>
     unlit = waiting on something else, and still resolvable
   </div>
 </div>
@@ -298,9 +315,55 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
     TASKS.forEach(function (t) { byId[t.id] = t; });
   }
   var SHOW_RESOLVED = false;
+  var PENDING = null;                 // a star being named, not yet saved
   function isOpen(t) { return t && !t.resolved_at; }
   function visible() {
     return SHOW_RESOLVED ? TASKS : TASKS.filter(isOpen);
+  }
+
+  /* ---- naming a new star ------------------------------------------------
+     It appears where you clicked and takes a name in place. Nothing reaches
+     the database until it has one, so a stray click on empty sky costs a
+     keystroke rather than a row to clean up. */
+  function beginNewStar(fx, fy) {
+    if (PENDING) return;
+    PENDING = { id: '__new__', title: '', notes: null, x: fx, y: fy,
+                created_at: null, resolved_at: null, pending: true };
+    TASKS.push(PENDING);
+    closePanel();
+    paint();
+    var box = sky.querySelector('.star.ghost input');
+    if (box) box.focus();
+  }
+
+  function dropNewStar() {
+    if (!PENDING) return;
+    var p = PENDING;
+    PENDING = null;
+    TASKS = TASKS.filter(function (x) { return x !== p; });
+    paint();
+  }
+
+  function commitNewStar(title) {
+    var p = PENDING;
+    if (!p) return;
+    title = (title || '').trim();
+    if (!title) { dropNewStar(); return; }
+    PENDING = null;                   // stop a second commit from the blur
+    post('/api/pool/task?title=' + encodeURIComponent(title) +
+         '&x=' + p.x.toFixed(4) + '&y=' + p.y.toFixed(4))
+      .then(function (row) {
+        row.x = Number(row.x); row.y = Number(row.y);
+        TASKS = TASKS.filter(function (x) { return x !== p; });
+        TASKS.push(row);
+        note(row.title + ' added');
+        paint();
+      })
+      .catch(function (err) {
+        note(err.message, true);
+        TASKS = TASKS.filter(function (x) { return x !== p; });
+        paint();
+      });
   }
   /* Only prerequisites that are still open. With `show resolved` on, byId also
      holds resolved stars, and a resolved prerequisite is a satisfied one -- it
@@ -360,6 +423,24 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
     Array.prototype.forEach.call(sky.querySelectorAll('.star'), function (n) { n.remove(); });
 
     visible().forEach(function (t) {
+      if (t.pending) {
+        var ghost = document.createElement('div');
+        ghost.className = 'star ghost' + (t.x > .74 ? ' flip' : '');
+        ghost.style.left = (t.x * W) + 'px';
+        ghost.style.top = (t.y * H) + 'px';
+        ghost.innerHTML = starSVG('new', 1.2) +
+          '<input maxlength="200" placeholder="name it" aria-label="Name this star">';
+        sky.appendChild(ghost);
+        var box = ghost.querySelector('input');
+        box.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); commitNewStar(box.value); }
+          else if (e.key === 'Escape') { e.preventDefault(); dropNewStar(); }
+          e.stopPropagation();          // Escape here is not "close the panel"
+        });
+        /* Clicking away keeps what you typed rather than throwing it out. */
+        box.addEventListener('blur', function () { commitNewStar(box.value); });
+        return;
+      }
       var done = !isOpen(t);
       var waits = done ? [] : prereqsOf(t.id);
       var el = document.createElement('div');
@@ -437,7 +518,7 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
 
   sky.addEventListener('pointerdown', function (e) {
     var el = e.target.closest ? e.target.closest('.star') : null;
-    if (!el) return;
+    if (!el || el.classList.contains('ghost')) return;
     var t = byId[el.dataset.id];
     if (!t) return;
     el.setPointerCapture(e.pointerId);
@@ -518,15 +599,38 @@ html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-
     if (e.target === veil) closeVeil();          // backdrop only
   });
 
+  /* Empty sky. A press that dismisses something open is only a dismissal --
+     you were closing the panel, not asking for a star. Anything else is a
+     request to make one where you clicked. */
+  var bgPress = null;
   sky.addEventListener('pointerdown', function (e) {
     if (!e.target.closest) return;
     if (e.target.closest('.star') || e.target.closest('#panel') ||
         e.target.closest('#veil')) return;
+    var dismissing = panelEl.classList.contains('open') ||
+                     veil.classList.contains('open') || !!PENDING;
     closePanel();
+    bgPress = dismissing ? null : { x: e.clientX, y: e.clientY };
+  });
+
+  sky.addEventListener('pointerup', function (e) {
+    var press = bgPress;
+    bgPress = null;
+    if (!press || PENDING) return;
+    if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > 4) return;   // a drag
+    if (e.target.closest &&
+        (e.target.closest('.star') || e.target.closest('#panel') ||
+         e.target.closest('#veil'))) return;
+    var r = sky.getBoundingClientRect();
+    beginNewStar(
+      Math.min(Math.max((e.clientX - r.left) / W, 0.03), 0.97),
+      Math.min(Math.max((e.clientY - r.top) / H, 0.05), 0.95)
+    );
   });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (veil.classList.contains('open')) { closeVeil(); return; }
+    if (PENDING) { dropNewStar(); return; }
     closePanel();
   });
 
