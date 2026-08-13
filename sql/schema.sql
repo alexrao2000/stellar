@@ -51,7 +51,7 @@ create table if not exists public.weight_log (
 
 -- The reconciled record: Google Takeout for every task and its completion
 -- status, Supabase weight_log for weight values. Built by
--- scripts/build_reconciled_export.py and loaded by scripts/load_task_history.py.
+-- Archived recovery tooling in scripts/archive built and loaded this data.
 --
 -- Deliberately a separate table from task_completions. That table is the raw
 -- sync output and remains the historical snapshot the reconciliation was built

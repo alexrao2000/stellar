@@ -76,8 +76,8 @@ class Config:
     google_token_file: str = field(
         default_factory=lambda: _resolve(os.getenv("GOOGLE_TOKEN_FILE", "token.json"))
     )
-    # Separate cache for the write-scoped consent used by scripts/restore_task.py,
-    # so the read-only token used by the sync is never upgraded in place.
+    # Reserved for archived one-off repair tooling; the active app and sync use
+    # only the read-only token above.
     google_token_rw_file: str = field(
         default_factory=lambda: _resolve(os.getenv("GOOGLE_TOKEN_RW_FILE", "token_rw.json"))
     )
