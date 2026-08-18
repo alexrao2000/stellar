@@ -89,14 +89,19 @@ html, body { margin: 0; height: 100%; background: #04050A; color: rgba(228,224,2
 @media (max-width: 760px) { .new { right: 14px; } .new input { width: 150px; } }
 
 /* An ember: what is left where a resolved star was. Visible only while
-   `show resolved` is on, and never gating anything. */
-.star.ember .name { color: rgba(150,146,185,.30); }
+   `show resolved` is on, and never gating anything. Title hidden until
+   hovered — a resolved star earned its quiet. */
+.star.ember { opacity: .45; }
+.star.ember .name { color: rgba(150,146,185,.30); opacity: 0; transition: opacity .2s; }
+.star.ember:hover .name { opacity: 1; }
 .star.ember .resolvedwhen {
   position: absolute; left: 15px; bottom: -4px; white-space: nowrap;
   font-family: ui-monospace, Menlo, monospace; font-size: 8.5px;
   letter-spacing: .16em; color: rgba(130,126,165,.34);
   pointer-events: none; user-select: none;
+  opacity: 0; transition: opacity .2s;
 }
+.star.ember:hover .resolvedwhen { opacity: 1; }
 .star.flip .resolvedwhen { left: auto; right: 15px; text-align: right; }
 
 .toggle {

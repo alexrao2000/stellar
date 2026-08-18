@@ -75,6 +75,10 @@ def _warm_cache() -> None:
             _task_history()
         except Exception as exc:  # noqa: BLE001
             log.warning("cache warm failed (%s); first request will be slower", exc)
+        try:
+            _pool_all()
+        except Exception:  # noqa: BLE001
+            pass
 
     threading.Thread(target=go, daemon=True).start()
 
@@ -897,6 +901,16 @@ def page_data() -> str:
 POOL_COLS = ("id", "title", "notes", "x", "y", "created_at", "resolved_at")
 
 
+def _pool_patch(fn) -> None:
+    """Apply fn to the cached pool state in place, keeping it fresh across writes."""
+    hit = _cache.get("pool")
+    if not hit:
+        return
+    ts, state = hit
+    fn(state)
+    _cache["pool"] = (ts, state)
+
+
 def _pool_missing(exc: Exception) -> bool:
     """True when the failure is 'the tables are not there yet'.
 
@@ -907,6 +921,23 @@ def _pool_missing(exc: Exception) -> bool:
     return "pool_tasks" in text or "pool_edges" in text or "does not exist" in text
 
 
+def _pool_fetch() -> dict:
+    """Pull every star and every edge from Supabase. Always includes resolved."""
+    client = _sb()
+    tasks = (client.table("pool_tasks").select(",".join(POOL_COLS))
+             .order("id").execute().data or [])
+    for row in tasks:
+        row["x"] = float(row.get("x") or 0.5)
+        row["y"] = float(row.get("y") or 0.5)
+    edges = (client.table("pool_edges")
+             .select("before_id,after_id").execute().data or [])
+    return {"tasks": tasks, "edges": edges}
+
+
+def _pool_all() -> dict:
+    return _cached("pool", _pool_fetch)
+
+
 def _pool_state(include_resolved: bool = False) -> dict:
     """The stars and the edges between them.
 
@@ -915,34 +946,13 @@ def _pool_state(include_resolved: bool = False) -> dict:
     row and their resolved_at, so `show resolved` can bring them back as embers
     and nothing is ever lost.
     """
-    def build() -> dict:
-        client = _sb()
-        query = client.table("pool_tasks").select(",".join(POOL_COLS))
-        if not include_resolved:
-            query = query.is_("resolved_at", "null")
-        tasks = query.order("id").execute().data or []
-        for row in tasks:
-            row["x"] = float(row.get("x") or 0.5)
-            row["y"] = float(row.get("y") or 0.5)
-        present = {r["id"] for r in tasks}
-        edges = client.table("pool_edges").select("before_id,after_id").execute().data or []
-        # Only edges whose ends are both in this payload; the page cannot draw a
-        # line to a star it was not given. Whether a *resolved* prerequisite still
-        # gates is a separate question, and the answer is no -- decided on the page,
-        # where the resolved flag is already to hand.
-        edges = [e for e in edges
-                 if e["before_id"] in present and e["after_id"] in present]
-        return {"tasks": tasks, "edges": edges}
-
-    return _cached(f"pool_state:{include_resolved}", build)
-
-
-def _invalidate_pool_cache() -> None:
-    """Pool writes must be visible immediately, not after the read-cache TTL."""
-    _cache.pop("pool_state:False", None)
-    _cache.pop("pool_state:True", None)
-    _refresh_failed.pop("pool_state:False", None)
-    _refresh_failed.pop("pool_state:True", None)
+    full = _pool_all()
+    tasks = full["tasks"] if include_resolved else [
+        t for t in full["tasks"] if not t.get("resolved_at")]
+    present = {r["id"] for r in tasks}
+    edges = [e for e in full["edges"]
+             if e["before_id"] in present and e["after_id"] in present]
+    return {"tasks": tasks, "edges": edges}
 
 
 @app.get("/api/pool")
@@ -968,8 +978,14 @@ def api_pool_notes(task_id: int, text: str = "") -> dict:
     )
     if not updated:
         raise HTTPException(404, f"no pool task {task_id}")
-    _invalidate_pool_cache()
-    return updated[0]
+    row = updated[0]
+    def _patch(s):
+        for t in s["tasks"]:
+            if t["id"] == task_id:
+                t["notes"] = row.get("notes")
+                break
+    _pool_patch(_patch)
+    return row
 
 
 def _clamp01(v: float) -> float:
@@ -989,22 +1005,32 @@ def api_pool_add(title: str, x: float = 0.5, y: float = 0.5, notes: str | None =
     }).execute().data or []
     if not created:
         raise HTTPException(500, "insert returned nothing")
-    _invalidate_pool_cache()
-    return created[0]
+    row = created[0]
+    row["x"] = float(row.get("x") or 0.5)
+    row["y"] = float(row.get("y") or 0.5)
+    _pool_patch(lambda s: s["tasks"].append(row))
+    return row
 
 
 @app.post("/api/pool/task/{task_id}/move")
 def api_pool_move(task_id: int, x: float, y: float) -> dict:
     """Where a star sits. Clamped into the field so nothing can be dragged
     somewhere it cannot be dragged back from."""
+    cx, cy = _clamp01(x), _clamp01(y)
     updated = (
         _sb().table("pool_tasks")
-        .update({"x": _clamp01(x), "y": _clamp01(y)})
+        .update({"x": cx, "y": cy})
         .eq("id", task_id).is_("resolved_at", "null").execute().data or []
     )
     if not updated:
         raise HTTPException(404, f"no open pool task {task_id}")
-    _invalidate_pool_cache()
+    def _patch(s):
+        for t in s["tasks"]:
+            if t["id"] == task_id:
+                t["x"] = float(cx)
+                t["y"] = float(cy)
+                break
+    _pool_patch(_patch)
     return updated[0]
 
 
@@ -1022,8 +1048,14 @@ def api_pool_resolve(task_id: int, done: bool = True) -> dict:
     )
     if not updated:
         raise HTTPException(404, f"no pool task {task_id}")
-    _invalidate_pool_cache()
-    return updated[0]
+    row = updated[0]
+    def _patch(s):
+        for t in s["tasks"]:
+            if t["id"] == task_id:
+                t["resolved_at"] = row.get("resolved_at")
+                break
+    _pool_patch(_patch)
+    return row
 
 
 def _would_cycle(edges: list[dict], before: int, after: int) -> bool:
@@ -1065,7 +1097,11 @@ def api_pool_delete(task_id: int) -> dict:
     )
     if not removed:
         raise HTTPException(404, f"no pool task {task_id}")
-    _invalidate_pool_cache()
+    def _patch(s):
+        s["tasks"] = [t for t in s["tasks"] if t["id"] != task_id]
+        s["edges"] = [e for e in s["edges"]
+                      if e["before_id"] != task_id and e["after_id"] != task_id]
+    _pool_patch(_patch)
     return {"id": task_id, "deleted": True, "title": removed[0].get("title")}
 
 
@@ -1073,16 +1109,17 @@ def api_pool_delete(task_id: int) -> dict:
 def api_pool_link(before_id: int, after_id: int) -> dict:
     if before_id == after_id:
         raise HTTPException(400, "a star cannot wait on itself")
-    client = _sb()
-    edges = client.table("pool_edges").select("before_id,after_id").execute().data or []
+    cached = _pool_all()
+    edges = cached["edges"]
     if any(e["before_id"] == before_id and e["after_id"] == after_id for e in edges):
         return {"before_id": before_id, "after_id": after_id, "already": True}
     if _would_cycle(edges, before_id, after_id):
         raise HTTPException(400, "that link would close a loop")
-    client.table("pool_edges").insert(
+    _sb().table("pool_edges").insert(
         {"before_id": before_id, "after_id": after_id}).execute()
-    _invalidate_pool_cache()
-    return {"before_id": before_id, "after_id": after_id}
+    edge = {"before_id": before_id, "after_id": after_id}
+    _pool_patch(lambda s: s["edges"].append(edge))
+    return edge
 
 
 @app.post("/api/pool/unlink")
@@ -1091,7 +1128,10 @@ def api_pool_unlink(before_id: int, after_id: int) -> dict:
         _sb().table("pool_edges").delete()
         .eq("before_id", before_id).eq("after_id", after_id).execute()
     )
-    _invalidate_pool_cache()
+    def _patch(s):
+        s["edges"] = [e for e in s["edges"]
+                      if not (e["before_id"] == before_id and e["after_id"] == after_id)]
+    _pool_patch(_patch)
     return {"before_id": before_id, "after_id": after_id, "removed": True}
 
 
