@@ -915,23 +915,34 @@ def _pool_state(include_resolved: bool = False) -> dict:
     row and their resolved_at, so `show resolved` can bring them back as embers
     and nothing is ever lost.
     """
-    client = _sb()
-    query = client.table("pool_tasks").select(",".join(POOL_COLS))
-    if not include_resolved:
-        query = query.is_("resolved_at", "null")
-    tasks = query.order("id").execute().data or []
-    for row in tasks:
-        row["x"] = float(row.get("x") or 0.5)
-        row["y"] = float(row.get("y") or 0.5)
-    present = {r["id"] for r in tasks}
-    edges = client.table("pool_edges").select("before_id,after_id").execute().data or []
-    # Only edges whose ends are both in this payload; the page cannot draw a
-    # line to a star it was not given. Whether a *resolved* prerequisite still
-    # gates is a separate question, and the answer is no -- decided on the page,
-    # where the resolved flag is already to hand.
-    edges = [e for e in edges
-             if e["before_id"] in present and e["after_id"] in present]
-    return {"tasks": tasks, "edges": edges}
+    def build() -> dict:
+        client = _sb()
+        query = client.table("pool_tasks").select(",".join(POOL_COLS))
+        if not include_resolved:
+            query = query.is_("resolved_at", "null")
+        tasks = query.order("id").execute().data or []
+        for row in tasks:
+            row["x"] = float(row.get("x") or 0.5)
+            row["y"] = float(row.get("y") or 0.5)
+        present = {r["id"] for r in tasks}
+        edges = client.table("pool_edges").select("before_id,after_id").execute().data or []
+        # Only edges whose ends are both in this payload; the page cannot draw a
+        # line to a star it was not given. Whether a *resolved* prerequisite still
+        # gates is a separate question, and the answer is no -- decided on the page,
+        # where the resolved flag is already to hand.
+        edges = [e for e in edges
+                 if e["before_id"] in present and e["after_id"] in present]
+        return {"tasks": tasks, "edges": edges}
+
+    return _cached(f"pool_state:{include_resolved}", build)
+
+
+def _invalidate_pool_cache() -> None:
+    """Pool writes must be visible immediately, not after the read-cache TTL."""
+    _cache.pop("pool_state:False", None)
+    _cache.pop("pool_state:True", None)
+    _refresh_failed.pop("pool_state:False", None)
+    _refresh_failed.pop("pool_state:True", None)
 
 
 @app.get("/api/pool")
@@ -957,6 +968,7 @@ def api_pool_notes(task_id: int, text: str = "") -> dict:
     )
     if not updated:
         raise HTTPException(404, f"no pool task {task_id}")
+    _invalidate_pool_cache()
     return updated[0]
 
 
@@ -977,6 +989,7 @@ def api_pool_add(title: str, x: float = 0.5, y: float = 0.5, notes: str | None =
     }).execute().data or []
     if not created:
         raise HTTPException(500, "insert returned nothing")
+    _invalidate_pool_cache()
     return created[0]
 
 
@@ -991,6 +1004,7 @@ def api_pool_move(task_id: int, x: float, y: float) -> dict:
     )
     if not updated:
         raise HTTPException(404, f"no open pool task {task_id}")
+    _invalidate_pool_cache()
     return updated[0]
 
 
@@ -1008,6 +1022,7 @@ def api_pool_resolve(task_id: int, done: bool = True) -> dict:
     )
     if not updated:
         raise HTTPException(404, f"no pool task {task_id}")
+    _invalidate_pool_cache()
     return updated[0]
 
 
@@ -1050,6 +1065,7 @@ def api_pool_delete(task_id: int) -> dict:
     )
     if not removed:
         raise HTTPException(404, f"no pool task {task_id}")
+    _invalidate_pool_cache()
     return {"id": task_id, "deleted": True, "title": removed[0].get("title")}
 
 
@@ -1065,6 +1081,7 @@ def api_pool_link(before_id: int, after_id: int) -> dict:
         raise HTTPException(400, "that link would close a loop")
     client.table("pool_edges").insert(
         {"before_id": before_id, "after_id": after_id}).execute()
+    _invalidate_pool_cache()
     return {"before_id": before_id, "after_id": after_id}
 
 
@@ -1074,6 +1091,7 @@ def api_pool_unlink(before_id: int, after_id: int) -> dict:
         _sb().table("pool_edges").delete()
         .eq("before_id", before_id).eq("after_id", after_id).execute()
     )
+    _invalidate_pool_cache()
     return {"before_id": before_id, "after_id": after_id, "removed": True}
 
 

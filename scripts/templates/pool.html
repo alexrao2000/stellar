@@ -1,17 +1,8 @@
 <title>Pool</title>
 <style>
-:root {
-  /* The sidebar's palette, stated here rather than inherited. _NAV_CSS ships a
-     light fallback for pages that bring none, and the sky is dark whatever the
-     OS is set to -- in light mode that fallback painted a white column against
-     black. A plain :root beats both the fallback and its dark media block on
-     source order, so this holds in either theme. */
-  --surface: #0A0B12;
-  --surface-2: #161822;
-  --rule: #1C1F2B;
-  --ink: #E4E0F2;
-  --ink-muted: rgba(154,150,190,.78);
-
+/* Pool colours deliberately live on .sky, not :root: the fixed sidebar is
+   shared app furniture and should retain its own theme. */
+.sky {
   --void: #04050A;
   --star: #FFFCF4;
   --ink-sky: rgba(228,224,242,.74);
@@ -20,7 +11,7 @@
   --line-live: rgba(196,178,255,.55);
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; height: 100%; background: var(--void); color: var(--ink-sky);
+html, body { margin: 0; height: 100%; background: #04050A; color: rgba(228,224,242,.74);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
 
 /* The pool owns the whole field, so the page furniture the other views use --
