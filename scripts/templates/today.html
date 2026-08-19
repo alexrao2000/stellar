@@ -432,6 +432,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       b.innerHTML = '<span class="box"></span><span class="ttl">' + esc(r.title) +
         '</span>' + extra;
       if (viaField) {
+        b.dataset.field = viaField;
         b.title = 'Set by the ' + (viaField === 'weight' ? 'Weight' : 'Wake up') + ' field above';
       }
       if (!BOOT.writable) {
@@ -505,6 +506,12 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     el.addEventListener('change', function () {
       var v = el.value;
       if (!v || v === saved[id]) return;      // cleared, or nothing changed
+      var task = document.querySelector('.task[data-field="' + id + '"]');
+      var wasDone = task ? task.classList.contains('done') : false;
+      /* A measurement resolves its task by definition. Show that result at
+         input speed; Vercel's write plus confirmation read can take long
+         enough for a network-gated checkmark to feel broken. */
+      if (task) setDone(task, true);
       el.classList.add('saving');
       post(build(v))
         .then(function () {
@@ -512,7 +519,10 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
           say(describe(v));
           return load();                       // reflects the auto-completion
         })
-        .catch(function (e) { say(e.message, true); })
+        .catch(function (e) {
+          if (task && document.body.contains(task)) setDone(task, wasDone);
+          say(e.message, true);
+        })
         .then(function () { el.classList.remove('saving'); });
     });
   }
