@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import json
+import os
 import re
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -237,6 +238,13 @@ def _warm_cache() -> None:
     -- an unreachable database should not stop the server booting, since the
     error pages explain the problem better than a crash does.
     """
+    # A Vercel instance should do only the work needed by its request. Warming
+    # the 6,000-row history on every serverless cold start multiplied database
+    # traffic and made even /login and /today compete with a multi-page read.
+    # Long-lived local development still benefits from warming in the background.
+    if os.getenv("VERCEL"):
+        return
+
     import threading
 
     def go():
@@ -797,17 +805,10 @@ def api_ensure_day(day: str) -> dict:
         and (not d.get("ends_on") or d["ends_on"] >= day)
     ]
 
-    # The cached history already answers "is this day materialised?", and for
-    # every day that is, the answer is no work. Asking Supabase regardless cost
-    # two round trips -- about 550ms -- on every single day change, which was
-    # most of what made moving between days feel slow.
-    cached = {(r["list_title"], r["title"]) for r in _task_history() if r["day"] == day}
-    if all((d["list_title"], d["title"]) in cached for d in due):
-        return {"day": day, "created": [], "already_present": len(cached)}
-
-    # Something looks absent. Confirm against the database before inserting
-    # rather than trusting the cache: it can lag a write made outside this
-    # process, and a duplicate row is worse than one round trip.
+    # Always inspect only this day. On a long-lived local process the full
+    # history cache made this shortcut cheap, but on Vercel it forced each cold
+    # instance to download thousands of rows just to answer whether today's
+    # handful already exists.
     client = _sb()
     existing = {(r["list_title"], r["title"]) for r in _day_rows(client, day)}
     wanted = [d for d in due if (d["list_title"], d["title"]) not in existing]
