@@ -1,10 +1,5 @@
-google-api-python-client>=2.130.0
-google-auth>=2.30.0
-google-auth-oauthlib>=1.2.0
 supabase>=2.7.0
 python-dotenv>=1.0.1
-pandas>=2.2.0
-numpy>=1.26.0
 tzlocal>=5.2
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0

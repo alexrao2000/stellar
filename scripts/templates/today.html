@@ -217,11 +217,6 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       String(x.getUTCMonth() + 1).padStart(2, '0') + '-' +
       String(x.getUTCDate()).padStart(2, '0');
   }
-  function daysApart(a, b) {
-    var qa = parts(a), qb = parts(b);
-    return Math.round((Date.UTC(qa[0], qa[1] - 1, qa[2]) -
-                       Date.UTC(qb[0], qb[1] - 1, qb[2])) / 86400000);
-  }
   /* The floor travels with the page, so writability is decided here rather
      than fetched -- which is what lets a day change stay client-side. */
   function writable(day) { return day >= BOOT.floor; }
@@ -234,14 +229,11 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     document.getElementById('pick').value = day;
   }
 
-  /* ---- sliding window ---------------------------------------------------
-     Seven days either side of the one on screen, pulled in the background so
-     stepping between them is instant. Strictly read-only: GET /api/day only.
-     Ensuring a day materialises its rows, and doing that for fourteen days
-     nobody asked to look at would write future rows as a side effect of
-     opening the page -- which is exactly what produces a wall of false misses
-     later. Only the day actually opened is ever materialised. */
-  var WINDOW = 7;
+  /* Days already visited in this browser stay cached for instant back/forward
+     navigation. Do not prefetch adjacent days: one page load previously fired
+     fourteen simultaneous requests, which caused Vercel to cold-start several
+     Python functions. The visible day still performs one live read so changes
+     made on another device are never hidden by this browser cache. */
   var CACHE = {};
   var pending = {};
   var requestVersion = {};
@@ -268,30 +260,6 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     return pending[key];
   }
 
-  function warm(centre) {
-    for (var i = 1; i <= WINDOW; i++) {          // nearest first
-      fetchDay(shiftDay(centre, -i)).catch(function () {});
-      fetchDay(shiftDay(centre, i)).catch(function () {});
-    }
-    Object.keys(CACHE).forEach(function (day) {  // slide: drop what fell out
-      if (Math.abs(daysApart(day, centre)) > WINDOW) delete CACHE[day];
-    });
-  }
-
-  /* The boot gate reveals the page when the network first falls quiet. Firing
-     fourteen prefetches before that would hold it hidden until the last one
-     landed, so the window waits its turn. */
-  function warmWhenIdle(centre) {
-    var root = document.documentElement;
-    if (!root.classList.contains('app-booting')) { warm(centre); return; }
-    var mo = new MutationObserver(function () {
-      if (root.classList.contains('app-booting')) return;
-      mo.disconnect();
-      warm(centre);
-    });
-    mo.observe(root, { attributes: true, attributeFilter: ['class'] });
-  }
-
   function showDay(day, opts) {
     opts = opts || {};
     DAY = day;
@@ -315,7 +283,6 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       if (DAY !== day) return;                   // stepped past it while loading
       render(rows);
       scheduleEnsure(day);
-      warmWhenIdle(day);
     }).catch(function (e) { say('Could not load: ' + e.message, true); });
   }
 
@@ -331,12 +298,13 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     ensureTimer = setTimeout(function () {
       if (DAY !== day) return;
       post('/api/day/' + day + '/ensure')
-        .then(function () {
+        .then(function (result) {
           ensured[day] = true;
-          delete CACHE[day];                     // it may have added rows
+          if (!result.created || !result.created.length) return null;
+          delete CACHE[day];                     // newly materialised rows
           return fetchDay(day, true);
         })
-        .then(function (rows) { if (DAY === day) render(rows); })
+        .then(function (rows) { if (rows && DAY === day) render(rows); })
         .catch(function (e) { say(e.message, true); });
     }, 400);
   }

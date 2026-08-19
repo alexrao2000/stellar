@@ -1,0 +1,10 @@
+-r requirements.txt
+
+# Local Google synchronization, Takeout import, and dataframe analysis.
+# Vercel does not execute these jobs, so keeping them out of requirements.txt
+# avoids shipping roughly 100 MB of unused libraries in every web function.
+google-api-python-client>=2.130.0
+google-auth>=2.30.0
+google-auth-oauthlib>=1.2.0
+pandas>=2.2.0
+numpy>=1.26.0

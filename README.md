@@ -65,7 +65,7 @@ Google Tasks API (hourly, ongoing) --/
 cd /Users/alexr/cal-task-sync
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-sync.txt
 ```
 
 ### 2. Configuration
