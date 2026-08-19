@@ -259,7 +259,9 @@ button:focus-visible, select:focus-visible, input:focus-visible {
     if (!total) return '—';
     if (done === total) return '100%';
     var p = done / total * 100;
-    return Math.min(Math.round(p), 99) + '%';
+    var rounded = Math.round(p * 10) / 10;
+    if (rounded >= 100) rounded = 99.9;
+    return rounded.toFixed(1) + '%';
   }
 
   /* Longest run, and the run still going as of the most recent scheduled day. */
