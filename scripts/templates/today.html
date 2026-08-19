@@ -244,19 +244,28 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   var WINDOW = 7;
   var CACHE = {};
   var pending = {};
+  var requestVersion = {};
   var ensured = {};
 
-  function fetchDay(day) {
-    if (CACHE[day]) return Promise.resolve(CACHE[day]);
-    if (pending[day]) return pending[day];
-    pending[day] = fetch('/api/day/' + day)
+  function fetchDay(day, fresh) {
+    if (!fresh && CACHE[day]) return Promise.resolve(CACHE[day]);
+    var key = day + (fresh ? ':fresh' : ':cached');
+    if (pending[key]) return pending[key];
+    var version = (requestVersion[day] || 0) + 1;
+    requestVersion[day] = version;
+    pending[key] = fetch('/api/day/' + day + (fresh ? '?fresh=true' : ''),
+                         fresh ? { cache: 'no-store' } : {})
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
       })
-      .then(function (rows) { delete pending[day]; CACHE[day] = rows; return rows; },
-            function (e) { delete pending[day]; throw e; });
-    return pending[day];
+      .then(function (rows) {
+        delete pending[key];
+        /* A slow background prefetch must never replace a newer live read. */
+        if (requestVersion[day] === version) CACHE[day] = rows;
+        return rows;
+      }, function (e) { delete pending[key]; throw e; });
+    return pending[key];
   }
 
   function warm(centre) {
@@ -302,7 +311,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
 
     if (CACHE[day]) render(CACHE[day]);          // already warmed: no wait
 
-    return fetchDay(day).then(function (rows) {
+    return fetchDay(day, true).then(function (rows) {
       if (DAY !== day) return;                   // stepped past it while loading
       render(rows);
       scheduleEnsure(day);
@@ -325,7 +334,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
         .then(function () {
           ensured[day] = true;
           delete CACHE[day];                     // it may have added rows
-          return fetchDay(day);
+          return fetchDay(day, true);
         })
         .then(function (rows) { if (DAY === day) render(rows); })
         .catch(function (e) { say(e.message, true); });
@@ -480,7 +489,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   function load() {
     var day = DAY;
     delete CACHE[day];
-    return fetchDay(day).then(function (rows) {
+    return fetchDay(day, true).then(function (rows) {
       if (DAY === day) render(rows);
     });
   }
