@@ -681,6 +681,13 @@ def api_task_history() -> list[dict]:
     return _task_history()
 
 
+def _task_projection(columns: str, *, title: str | None = None) -> list[dict]:
+    """Read a narrow task_history projection without loading the full cache."""
+    config = load_config()
+    equals = {"title": title} if title is not None else None
+    return read_rows(config, "task_history", columns=columns, equals=equals)
+
+
 @app.get("/api/weights")
 def api_weights() -> list[dict]:
     """Per-day weights, taken from task_history rather than weight_log.
@@ -689,8 +696,8 @@ def api_weights() -> list[dict]:
     supplied after the overwrite and that weight_log never captured.
     """
     wake_or_weight = [
-        r for r in _task_history()
-        if r["weight_lbs"] is not None and r["title"].strip().lower() == "weigh yourself"
+        r for r in _task_projection("day,weight_lbs", title="Weigh yourself")
+        if r.get("weight_lbs") is not None
     ]
     return [{"d": r["day"], "w": round(float(r["weight_lbs"]), 1)} for r in wake_or_weight]
 
@@ -704,8 +711,8 @@ def api_wake() -> list[dict]:
     flag that lets it match "Wake-up Time:" as actually written.
     """
     out = []
-    for r in _task_history():
-        if r["title"].strip().lower() != "wake up" or not r["notes"]:
+    for r in _task_projection("day,notes", title="Wake Up"):
+        if not r.get("notes"):
             continue
         parsed = parse_wake_up(r["notes"])
         if parsed:
@@ -713,6 +720,12 @@ def api_wake() -> list[dict]:
             # `time` is kept for anything reading this endpoint directly.
             out.append({"d": r["day"], "time": parsed[0], "w": parsed[1]})
     return out
+
+
+@app.get("/api/consistency")
+def api_consistency() -> list[dict]:
+    """The four fields used by consistency analysis, without notes or metrics."""
+    return _task_projection("day,list_title,title,is_completed")
 
 
 @app.post("/api/refresh")
@@ -1020,7 +1033,7 @@ def page_today(day: str | None = None) -> str:
 @app.get("/calendar", response_class=HTMLResponse)
 def page_calendar() -> str:
     return _render("calendar_view.html", {
-        "mode": "inline", "data": _task_history(),
+        "mode": "live", "endpoint": "/api/task_history", "paged": False,
     }, active="/calendar")
 
 
@@ -1061,28 +1074,28 @@ WAKE_CFG = {
 @app.get("/weight", response_class=HTMLResponse)
 def page_weight() -> str:
     return _render("series_chart.html", {
-        "mode": "inline", "data": api_weights(), "cfg": WEIGHT_CFG,
+        "mode": "live", "endpoint": "/api/weights", "cfg": WEIGHT_CFG,
     }, active="/weight")
 
 
 @app.get("/wake", response_class=HTMLResponse)
 def page_wake() -> str:
     return _render("series_chart.html", {
-        "mode": "inline", "data": api_wake(), "cfg": WAKE_CFG,
+        "mode": "live", "endpoint": "/api/wake", "cfg": WAKE_CFG,
     }, active="/wake")
 
 
 @app.get("/consistency", response_class=HTMLResponse)
 def page_consistency() -> str:
     return _render("consistency.html", {
-        "mode": "inline", "data": _task_history(),
+        "mode": "live", "endpoint": "/api/consistency",
     }, active="/consistency")
 
 
 @app.get("/data", response_class=HTMLResponse)
 def page_data() -> str:
     return _render("data_table.html", {
-        "mode": "inline", "data": _task_history(),
+        "mode": "live", "endpoint": "/api/task_history",
     }, active="/data")
 
 

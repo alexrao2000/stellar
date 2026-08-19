@@ -73,3 +73,44 @@ def test_serverless_startup_does_not_warm_large_caches(monkeypatch):
     )
 
     server._warm_cache()
+
+
+def test_analytical_page_shells_do_not_block_on_history(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "_task_history",
+        lambda: (_ for _ in ()).throw(AssertionError("page route loaded history")),
+    )
+
+    pages = [
+        (server.page_calendar(), "/api/task_history"),
+        (server.page_weight(), "/api/weights"),
+        (server.page_wake(), "/api/wake"),
+        (server.page_consistency(), "/api/consistency"),
+        (server.page_data(), "/api/task_history"),
+    ]
+
+    for html, endpoint in pages:
+        assert '"mode":"live"' in html
+        assert endpoint in html
+
+
+def test_measurement_apis_use_narrow_projections(monkeypatch):
+    calls = []
+
+    def projection(columns, *, title=None):
+        calls.append((columns, title))
+        if title == "Weigh yourself":
+            return [{"day": "2026-08-19", "weight_lbs": "147.3"}]
+        return [{"day": "2026-08-19", "notes": "Wake-up Time: 9:54 am"}]
+
+    monkeypatch.setattr(server, "_task_projection", projection)
+
+    assert server.api_weights() == [{"d": "2026-08-19", "w": 147.3}]
+    assert server.api_wake() == [
+        {"d": "2026-08-19", "time": "09:54:00", "w": 594}
+    ]
+    assert calls == [
+        ("day,weight_lbs", "Weigh yourself"),
+        ("day,notes", "Wake Up"),
+    ]
