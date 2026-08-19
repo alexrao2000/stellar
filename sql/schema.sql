@@ -117,17 +117,10 @@ alter table public.weight_log enable row level security;
 alter table public.heartbeat enable row level security;
 alter table public.task_history enable row level security;
 
--- The live calendar page reads task_history directly from the browser with the
--- anon (publishable) key, so it needs an explicit read policy: RLS with no
--- policy returns zero rows to anything but service_role.
---
--- Read only, and scoped to this one table. The anon key is embedded in the page
--- and must therefore never be able to write, nor to reach task_completions,
--- weight_log or wake_up_log.
+-- Pages now read through the authenticated server. Nothing in the browser
+-- talks to PostgREST, so anon/authenticated roles get no direct table access.
 drop policy if exists "anon reads task_history" on public.task_history;
-create policy "anon reads task_history"
-    on public.task_history for select to anon using (true);
-
+revoke select on public.task_history from anon, authenticated;
 revoke insert, update, delete, truncate on public.task_history from anon, authenticated;
 
 -- --------------------------------------------------------------------------

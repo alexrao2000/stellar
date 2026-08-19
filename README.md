@@ -121,7 +121,31 @@ This loads every historical wake-up time, weight, and per-day completion into th
 make dev     # http://localhost:8000
 ```
 
-### 6. Schedule it
+### 6. Protect the web app
+
+Authentication is optional for local-only use and mandatory before exposing the
+app on a public URL. It uses one allow-listed Supabase Auth account; task rows do
+not need an owner column or data migration.
+
+1. In Supabase, open **Authentication → Users** and create your user.
+2. Add the following to `.env` locally and to the hosting environment:
+
+   ```text
+   SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+   AUTH_ALLOWED_EMAIL=you@example.com
+   ```
+
+   Setting `AUTH_ALLOWED_EMAIL` enables authentication. HTTPS deployments use
+   secure cookies automatically; local HTTP deliberately does not.
+3. Apply [`sql/auth_lockdown.sql`](sql/auth_lockdown.sql) in the Supabase SQL
+   editor. This removes the obsolete anonymous read policy now that all browser
+   access goes through the authenticated server.
+
+The access token is short-lived. The server verifies it and automatically
+rotates the refresh token in HTTP-only cookies, so an open phone app stays
+signed in without exposing either token to JavaScript.
+
+### 7. Schedule it
 
 Recommended: **GitHub Actions** (runs even when your Mac is off). See
 [Deployment](#deployment-github-actions) below.

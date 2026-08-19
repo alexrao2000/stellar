@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Sign in · Task Tracker</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+      background: #efeef4; color: #191627; padding: 20px; }
+    main { width: min(100%, 360px); background: #fcfbfe; border: 1px solid #dcd8e6;
+      border-radius: 14px; padding: 28px; box-shadow: 0 8px 30px rgba(25,22,39,.08); }
+    .eyebrow { margin: 0 0 8px; font: 11px ui-monospace, Menlo, monospace;
+      letter-spacing: .16em; text-transform: uppercase; color: #6a6480; }
+    h1 { margin: 0 0 22px; font-size: 1.55rem; }
+    label { display: block; margin: 14px 0 5px; font-size: .78rem; font-weight: 650; }
+    input { width: 100%; padding: 11px 12px; border: 1px solid #dcd8e6;
+      border-radius: 9px; background: #fff; color: #191627; font: inherit; }
+    input:focus { outline: 2px solid #7a4fd8; outline-offset: 1px; }
+    button { width: 100%; margin-top: 20px; padding: 11px; border: 0; border-radius: 9px;
+      background: #6d4ac4; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    #error { min-height: 1.2em; margin: 12px 0 0; color: #a33a28; font-size: .82rem; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #131019; color: #ebe8f5; }
+      main { background: #1b1826; border-color: #2e2a3d; box-shadow: 0 8px 30px #0008; }
+      .eyebrow { color: #948dad; }
+      input { background: #232032; border-color: #2e2a3d; color: #ebe8f5; }
+      button { background: #8b63e8; color: #120e1c; }
+      #error { color: #e3806b; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Task Tracker</p>
+    <h1>Sign in</h1>
+    <form id="login">
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" required autofocus>
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+      <p id="error" role="alert"></p>
+    </form>
+  </main>
+  <script>
+    var next = __NEXT__;
+    document.getElementById('login').addEventListener('submit', function (event) {
+      event.preventDefault();
+      var button = this.querySelector('button');
+      var error = document.getElementById('error');
+      button.disabled = true; error.textContent = '';
+      fetch('/auth/login', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email: document.getElementById('email').value,
+          password: document.getElementById('password').value})
+      }).then(function (response) {
+        return response.json().catch(function () { return {}; }).then(function (body) {
+          if (!response.ok) throw new Error(body.detail || 'Sign-in failed');
+          location.replace(next);
+        });
+      }).catch(function (err) {
+        error.textContent = err.message; button.disabled = false;
+      });
+    });
+  </script>
+</body>
+</html>
