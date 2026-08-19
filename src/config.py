@@ -43,6 +43,11 @@ def _split_aliases(value: str) -> dict[str, str]:
     return aliases
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    return default if value is None else value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def detect_local_timezone() -> str | None:
     """Best-effort IANA timezone name for this machine, or None if undetectable."""
     # 1. Explicit override wins.
@@ -90,7 +95,7 @@ class Config:
     local_timezone: str = field(default_factory=lambda: detect_local_timezone() or "UTC")
 
     storage_backend: str = field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "supabase").lower())
-    supabase_url: str = field(default_factory=lambda: os.getenv("SUPABASE_URL", ""))
+    supabase_url: str = field(default_factory=lambda: os.getenv("SUPABASE_URL", "").strip())
     # The privileged key. Supabase's newer format is `sb_secret_...` under
     # SUPABASE_SECRET_KEY; the legacy JWT `service_role` key lived under
     # SUPABASE_SERVICE_ROLE_KEY. Prefer the new name, fall back to the old one so
@@ -99,13 +104,34 @@ class Config:
         default_factory=lambda: (
             os.getenv("SUPABASE_SECRET_KEY", "")
             or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-        )
+        ).strip()
     )
     # Anon / publishable key. Safe to embed in a page that ships to the browser,
     # because it is governed by RLS -- unlike supabase_key above, which bypasses
     # it. Kept as a separate setting so the two can never be confused.
-    supabase_anon_key: str = field(default_factory=lambda: os.getenv("SUPABASE_ANON_KEY", ""))
+    supabase_anon_key: str = field(
+        default_factory=lambda: (
+            os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+            or os.getenv("SUPABASE_ANON_KEY", "")
+        ).strip()
+    )
     sqlite_path: str = field(default_factory=lambda: _resolve(os.getenv("SQLITE_PATH", "cal_task_sync.sqlite")))
+
+    # Single-user web authentication. Setting AUTH_ALLOWED_EMAIL enables it by
+    # default; Vercel also defaults to enabled so a missing setting fails closed
+    # rather than accidentally publishing a write-enabled app.
+    auth_allowed_email: str = field(
+        default_factory=lambda: os.getenv("AUTH_ALLOWED_EMAIL", "").strip().casefold()
+    )
+    auth_enabled: bool = field(
+        default_factory=lambda: _env_bool(
+            "AUTH_ENABLED",
+            bool(os.getenv("AUTH_ALLOWED_EMAIL", "").strip() or os.getenv("VERCEL")),
+        )
+    )
+    auth_cookie_secure: bool = field(
+        default_factory=lambda: _env_bool("AUTH_COOKIE_SECURE", bool(os.getenv("VERCEL")))
+    )
 
     wake_up_task_title: str = field(default_factory=lambda: os.getenv("WAKE_UP_TASK_TITLE", "Wake Up"))
     weight_task_title: str = field(default_factory=lambda: os.getenv("WEIGHT_TASK_TITLE", "Weigh yourself"))

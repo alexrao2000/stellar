@@ -51,3 +51,4 @@ token_rw.json
 # in particular cannot be regenerated, so give it a durable home elsewhere
 # before purging.
 data/
+.vercel

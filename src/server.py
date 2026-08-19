@@ -13,18 +13,23 @@ Run:  make dev        (or: uvicorn src.server:app --reload --port 8000)
 from __future__ import annotations
 
 import logging
+import json
 import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import load_config
 from .parsers import parse_wake_up
 from .read import read_rows
+from .web_auth import AuthError, AuthSession, web_auth
 
 log = logging.getLogger("cal-task-sync")
 
@@ -41,6 +46,10 @@ CURRENT_WEIGHT_CLAUSE = re.compile(
 # between refreshes and can be held far longer than the original two minutes.
 # POST /api/refresh forces a re-read.
 CACHE_TTL = 900.0
+# Pool state is also changed by other machines. Its page polls while visible,
+# so keep this cache short enough for those polls to observe remote writes while
+# still collapsing simultaneous page loads into one pair of Supabase reads.
+POOL_CACHE_TTL = 5.0
 # After a refresh fails, keep serving what we have for this long before trying
 # again. Without it a dead network is re-dialled on every single request, and
 # /today now asks for fifteen days at once.
@@ -57,6 +66,166 @@ app = FastAPI(title="Task Tracker", docs_url=None)
 # fraction of that, which is most of the cold-load cost on any connection
 # slower than localhost.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+ACCESS_COOKIE = "task_access"
+REFRESH_COOKIE = "task_refresh"
+PUBLIC_PATHS = {"/favicon.svg", "/login", "/auth/login", "/auth/logout"}
+
+
+def _auth_configured(config) -> bool:
+    return bool(
+        config.supabase_url
+        and config.supabase_anon_key
+        and config.auth_allowed_email
+    )
+
+
+def _allowed(config, user) -> bool:
+    return user.email.casefold() == config.auth_allowed_email
+
+
+def _set_session_cookies(response: Response, session: AuthSession, config) -> None:
+    common = {
+        "httponly": True,
+        "secure": config.auth_cookie_secure,
+        "samesite": "lax",
+        "path": "/",
+    }
+    response.set_cookie(
+        ACCESS_COOKIE, session.access_token, max_age=session.expires_in, **common
+    )
+    # Supabase owns session expiry and rotates this value on every refresh. A
+    # durable browser cookie prevents an arbitrary client-side timeout from
+    # ending an otherwise valid session.
+    response.set_cookie(
+        REFRESH_COOKIE, session.refresh_token, max_age=365 * 24 * 60 * 60, **common
+    )
+
+
+def _clear_session_cookies(response: Response, config) -> None:
+    for name in (ACCESS_COOKIE, REFRESH_COOKIE):
+        response.delete_cookie(
+            name,
+            path="/",
+            secure=config.auth_cookie_secure,
+            httponly=True,
+            samesite="lax",
+        )
+
+
+def _same_origin(request: Request) -> bool:
+    origin = request.headers.get("origin")
+    if not origin:
+        return False
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    scheme = (forwarded_proto or request.url.scheme).split(",", 1)[0].strip()
+    return origin.rstrip("/") == f"{scheme}://{request.headers.get('host', '')}"
+
+
+def _auth_failure(request: Request, detail: str = "Sign in required", status: int = 401):
+    if request.method in {"GET", "HEAD"} and not request.url.path.startswith("/api/"):
+        target = request.url.path
+        if request.url.query:
+            target += "?" + request.url.query
+        return RedirectResponse(f"/login?next={quote(target, safe='')}", status_code=303)
+    return JSONResponse({"detail": detail}, status_code=status)
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        config = load_config()
+        if not config.auth_enabled or request.url.path in PUBLIC_PATHS:
+            return await call_next(request)
+        if not _auth_configured(config):
+            return JSONResponse(
+                {"detail": "Authentication is enabled but not configured"}, status_code=503
+            )
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and not _same_origin(request):
+            return JSONResponse({"detail": "Cross-origin write refused"}, status_code=403)
+
+        access = request.cookies.get(ACCESS_COOKIE, "")
+        refresh = request.cookies.get(REFRESH_COOKIE, "")
+        renewed = None
+        user = None
+        if access:
+            try:
+                user = await web_auth.verify(config.supabase_url, config.supabase_anon_key, access)
+            except AuthError as exc:
+                if exc.status == 503:
+                    return JSONResponse({"detail": str(exc)}, status_code=503)
+        if user is None and refresh:
+            try:
+                renewed = await web_auth.refresh(
+                    config.supabase_url, config.supabase_anon_key, refresh
+                )
+                user = renewed.user
+            except AuthError as exc:
+                if exc.status == 503:
+                    return JSONResponse({"detail": str(exc)}, status_code=503)
+        if user is None:
+            response = _auth_failure(request)
+            _clear_session_cookies(response, config)
+            return response
+        if not _allowed(config, user):
+            response = _auth_failure(request, "This account is not allowed", 403)
+            _clear_session_cookies(response, config)
+            return response
+
+        request.state.auth_user = user
+        response = await call_next(request)
+        if renewed:
+            _set_session_cookies(response, renewed, config)
+        return response
+
+
+app.add_middleware(AuthMiddleware)
+
+
+class LoginBody(BaseModel):
+    email: str
+    password: str
+
+
+@app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+def page_login(request: Request) -> Response:
+    config = load_config()
+    if not config.auth_enabled:
+        return RedirectResponse("/", status_code=303)
+    target = request.query_params.get("next", "/")
+    if not target.startswith("/") or target.startswith("//"):
+        target = "/"
+    html = (TEMPLATES / "login.html").read_text(encoding="utf-8")
+    return HTMLResponse(html.replace("__NEXT__", json.dumps(target)))
+
+
+@app.post("/auth/login", include_in_schema=False)
+async def auth_login(body: LoginBody, request: Request) -> Response:
+    config = load_config()
+    if not config.auth_enabled or not _auth_configured(config):
+        raise HTTPException(503, "Authentication is not configured")
+    if not _same_origin(request):
+        raise HTTPException(403, "Cross-origin sign-in refused")
+    try:
+        session = await web_auth.sign_in(
+            config.supabase_url, config.supabase_anon_key, body.email, body.password
+        )
+    except AuthError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    if not _allowed(config, session.user):
+        raise HTTPException(403, "This account is not allowed")
+    response = JSONResponse({"ok": True, "email": session.user.email})
+    _set_session_cookies(response, session, config)
+    return response
+
+
+@app.post("/auth/logout", include_in_schema=False)
+def auth_logout(request: Request) -> Response:
+    config = load_config()
+    if config.auth_enabled and not _same_origin(request):
+        raise HTTPException(403, "Cross-origin sign-out refused")
+    response = RedirectResponse("/login", status_code=303)
+    _clear_session_cookies(response, config)
+    return response
 
 
 @app.on_event("startup")
@@ -83,7 +252,7 @@ def _warm_cache() -> None:
     threading.Thread(target=go, daemon=True).start()
 
 
-def _cached(key: str, build):
+def _cached(key: str, build, ttl: float = CACHE_TTL):
     """Read through the cache, and prefer a stale answer to no answer.
 
     These are reads of data that changes rarely -- the history, the recurrence
@@ -96,7 +265,7 @@ def _cached(key: str, build):
     now = time.monotonic()
     hit = _cache.get(key)
     if hit:
-        if now - hit[0] < CACHE_TTL:
+        if now - hit[0] < ttl:
             return hit[1]
         if now - _refresh_failed.get(key, float("-inf")) < STALE_RETRY:
             return hit[1]                     # backing off a failing refresh
@@ -255,6 +424,16 @@ html body { padding-left: var(--nav-w); }
   background: var(--surface-2); border-left-color: var(--nav-accent);
 }
 .sidenav a:focus-visible { outline: 2px solid var(--nav-accent); outline-offset: -2px; }
+.sidenav .signout { margin-top: auto; padding-top: 12px; }
+.sidenav .signout button {
+  width: 100%; padding: 9px 10px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--ink-muted); cursor: pointer;
+  font: inherit; text-align: left;
+}
+.sidenav .signout button:hover { background: var(--surface-2); color: var(--ink); }
+.sidenav .signout button:focus-visible {
+  outline: 2px solid var(--nav-accent); outline-offset: -2px;
+}
 /* The check-in page is phone-first -- it gets used standing in a bathroom. A
    fixed column would eat a third of that screen, so below this width the nav
    goes back to a scrollable strip across the top. */
@@ -272,6 +451,8 @@ html body { padding-left: var(--nav-w); }
     border-left: none; border-bottom: 2px solid transparent;
   }
   .sidenav a.here { border-left-color: transparent; border-bottom-color: var(--nav-accent); }
+  .sidenav .signout { margin-top: 0; padding-top: 0; }
+  .sidenav .signout button { white-space: nowrap; padding: 7px 10px; }
 }
 @media print { .sidenav { display: none; } html body { padding-left: 0; } }
 
@@ -425,9 +606,15 @@ def _nav(active: str) -> str:
         )
         for href, label in NAV_ITEMS
     )
+    signout = ""
+    if load_config().auth_enabled:
+        signout = (
+            '<form class="signout" action="/auth/logout" method="post">'
+            '<button type="submit">Sign out</button></form>'
+        )
     return (
         '<nav class="sidenav" aria-label="Views">'
-        '<div class="brand">Task Tracker</div>' + links + "</nav>"
+        '<div class="brand">Task Tracker</div>' + links + signout + "</nav>"
     )
 
 
@@ -694,16 +881,23 @@ def _sort_order() -> dict[str, int]:
 
 
 @app.get("/api/day/{day}")
-def api_day(day: str) -> list[dict]:
+def api_day(day: str, response: Response, fresh: bool = False) -> list[dict]:
     """A day's tasks, ordered as the check-in page shows them.
 
-    Served from the cached history rather than querying Supabase. Writes patch
-    that cache, so it is already current -- and this is on the path of every
-    task tap, where a live round trip was costing ~200ms of visible spinner.
+    Background prefetches use the cached history, but the day actually visible
+    in the browser asks for ``fresh=true`` and performs one small day-scoped
+    query. Vercel may route consecutive requests to different warm instances,
+    whose process-local history caches cannot be kept coherent with each other.
+    A live visible-day read prevents those caches from making completed tasks
+    or measurements appear to move backwards after a refresh.
     """
     _check_day(day)
     order = _sort_order()
-    rows = [r for r in _task_history() if r["day"] == day]
+    if fresh:
+        response.headers["Cache-Control"] = "no-store"
+        rows = [_shape(r) for r in _day_rows(_sb(), day)]
+    else:
+        rows = [r for r in _task_history() if r["day"] == day]
     rows.sort(key=lambda r: (order.get(r["title"], 999), r["title"]))
     return rows
 
@@ -931,11 +1125,12 @@ def _pool_fetch() -> dict:
         row["y"] = float(row.get("y") or 0.5)
     edges = (client.table("pool_edges")
              .select("before_id,after_id").execute().data or [])
+    edges.sort(key=lambda e: (e["before_id"], e["after_id"]))
     return {"tasks": tasks, "edges": edges}
 
 
 def _pool_all() -> dict:
-    return _cached("pool", _pool_fetch)
+    return _cached("pool", _pool_fetch, ttl=POOL_CACHE_TTL)
 
 
 def _pool_state(include_resolved: bool = False) -> dict:

@@ -256,6 +256,7 @@ html, body { margin: 0; height: 100%; background: #04050A; color: rgba(228,224,2
   var panelEl = document.getElementById('panel');
   var veil = document.getElementById('veil');
   var W = 0, H = 0;
+  var writesInFlight = 0;
 
   function note(msg, bad) {
     noteEl.textContent = msg || '';
@@ -267,11 +268,18 @@ html, body { margin: 0; height: 100%; background: #04050A; color: rgba(228,224,2
     });
   }
   function post(url, method) {
+    writesInFlight++;
     return fetch(url, { method: method || 'POST' }).then(function (res) {
       if (res.ok) return res.json();
       return res.json().catch(function () { return {}; }).then(function (j) {
         throw new Error(j.detail || ('HTTP ' + res.status));
       });
+    }).then(function (value) {
+      writesInFlight--;
+      return value;
+    }, function (err) {
+      writesInFlight--;
+      throw err;
     });
   }
 
@@ -821,6 +829,42 @@ html, body { margin: 0; height: 100%; background: #04050A; color: rgba(228,224,2
     }
     return best;
   }
+
+  /* Another machine may resolve or rearrange the same pool. Poll only while
+     this page is visible, and never replace local state during a write, drag,
+     or text edit. A stable serialized comparison avoids rebuilding the DOM
+     when the database has not changed. */
+  var pollBusy = false;
+  function poolSnapshot(tasks, edges) {
+    return JSON.stringify([tasks, edges]);
+  }
+  function pollPool() {
+    if (document.hidden || pollBusy || writesInFlight || drag || PENDING ||
+        panelEl.contains(document.activeElement)) return;
+    pollBusy = true;
+    fetch('/api/pool?resolved=true').then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }).then(function (state) {
+      var tasks = state.tasks || [], edges = state.edges || [];
+      if (poolSnapshot(tasks, edges) === poolSnapshot(TASKS, EDGES)) return;
+      var selected = PANEL_ID;
+      TASKS = tasks;
+      EDGES = edges;
+      paint();
+      if (selected && byId[selected] && (SHOW_RESOLVED || isOpen(byId[selected]))) {
+        openPanel(byId[selected]);
+      } else if (selected) {
+        closePanel();
+      }
+    }).catch(function () {
+      /* Background refresh failure should not disturb a usable cached page. */
+    }).then(function () { pollBusy = false; });
+  }
+  window.setInterval(pollPool, 15000);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) pollPool();
+  });
 
   window.addEventListener('resize', resize);
   resize();
