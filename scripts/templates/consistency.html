@@ -255,6 +255,12 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   function pctColour(p) {
     return p >= 80 ? 'var(--done)' : p >= 50 ? 'var(--warn)' : 'var(--miss)';
   }
+  function fmtPct(done, total) {
+    if (!total) return '—';
+    if (done === total) return '100%';
+    var p = done / total * 100;
+    return Math.min(Math.round(p), 99) + '%';
+  }
 
   /* Longest run, and the run still going as of the most recent scheduled day. */
   function streaks(flags) {
@@ -282,7 +288,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
       cell('Avg per day', avg.toFixed(1)),
       cell('Best day', best ? perDay[best] + ' tasks' : '—', best || ''),
       cell('Overall rate',
-           past.length ? Math.round(done.length / past.length * 100) + '%' : '—',
+           fmtPct(done.length, past.length),
            past.length.toLocaleString() + ' scheduled'),
     ].join('');
   }
@@ -310,7 +316,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
               esc(s.title) + '</button></div>' +
             '<div class="track"><div class="fill" style="width:' + s.pct.toFixed(1) +
               '%;background:' + pctColour(s.pct) + '"></div></div>' +
-            '<div class="num">' + s.pct.toFixed(0) + '%  ' + s.done + '/' + s.n + '</div>' +
+            '<div class="num">' + fmtPct(s.done, s.n) + '  ' + s.done + '/' + s.n + '</div>' +
           '</div>';
         }).join('')
       : '<div class="empty">No tasks meet that threshold. Lower the slider.</div>';
@@ -335,7 +341,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
     var st = streaks(flags);
 
     var el = document.getElementById('pct');
-    el.textContent = Math.round(pct) + '%';
+    el.textContent = fmtPct(done, flags.length);
     el.style.color = pctColour(pct);
     document.getElementById('meta').innerHTML =
       esc(t) + ' — <b>' + done.toLocaleString() + '</b> of <b>' +
