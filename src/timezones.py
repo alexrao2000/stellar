@@ -50,9 +50,9 @@ def resolve_timezone(config: Config, allow_google: bool = True) -> str:
             log.warning("Google Calendar timezone lookup failed (%s).", exc)
 
     machine_tz = detect_local_timezone()
-    if machine_tz:
+    if machine_tz and machine_tz != "UTC":
         log.info("Using machine-detected timezone: %s", machine_tz)
         return machine_tz
 
-    log.info("Falling back to UTC timezone.")
-    return "UTC"
+    log.info("No explicit timezone; defaulting to America/Los_Angeles.")
+    return "America/Los_Angeles"
