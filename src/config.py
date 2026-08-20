@@ -91,8 +91,10 @@ class Config:
     google_credentials_json: str = field(default_factory=lambda: os.getenv("GOOGLE_CREDENTIALS_JSON", ""))
     google_token_json: str = field(default_factory=lambda: os.getenv("GOOGLE_TOKEN_JSON", ""))
     task_lists: list[str] = field(default_factory=lambda: _split_csv(os.getenv("TASK_LISTS", "")))
-    # Auto-detected when LOCAL_TIMEZONE is unset; falls back to UTC if undetectable.
-    local_timezone: str = field(default_factory=lambda: detect_local_timezone() or "UTC")
+    # Auto-detected when LOCAL_TIMEZONE is unset; falls back to America/Los_Angeles
+    # rather than UTC so that a serverless deploy (Vercel, Lambda) without an
+    # explicit TZ env var still buckets days correctly for Pacific time.
+    local_timezone: str = field(default_factory=lambda: detect_local_timezone() or "America/Los_Angeles")
 
     storage_backend: str = field(default_factory=lambda: os.getenv("STORAGE_BACKEND", "supabase").lower())
     supabase_url: str = field(default_factory=lambda: os.getenv("SUPABASE_URL", "").strip())
