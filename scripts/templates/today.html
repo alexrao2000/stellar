@@ -277,6 +277,10 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     say(ro ? 'Read-only: ' + day + ' is before ' + BOOT.floor +
              ', the reconciled history.' : '');
 
+    document.getElementById('tasks').innerHTML = '';
+    document.getElementById('weight').value = '';
+    document.getElementById('wake').value = '';
+
     return fetchDay(day, true).then(function (rows) {
       if (DAY !== day) return;                   // stepped past it while loading
       render(rows);
