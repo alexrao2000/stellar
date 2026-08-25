@@ -229,11 +229,6 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     document.getElementById('pick').value = day;
   }
 
-  /* Days already visited in this browser stay cached for instant back/forward
-     navigation. Do not prefetch adjacent days: one page load previously fired
-     fourteen simultaneous requests, which caused Vercel to cold-start several
-     Python functions. The visible day still performs one live read so changes
-     made on another device are never hidden by this browser cache. */
   var CACHE = {};
   var pending = {};
   var requestVersion = {};
@@ -277,15 +272,26 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     say(ro ? 'Read-only: ' + day + ' is before ' + BOOT.floor +
              ', the reconciled history.' : '');
 
-    document.getElementById('tasks').innerHTML = '';
-    document.getElementById('weight').value = '';
-    document.getElementById('wake').value = '';
+    if (CACHE[day]) {
+      render(CACHE[day]);
+    } else {
+      document.getElementById('tasks').innerHTML = '';
+      document.getElementById('weight').value = '';
+      document.getElementById('wake').value = '';
+    }
 
     return fetchDay(day, true).then(function (rows) {
       if (DAY !== day) return;                   // stepped past it while loading
       render(rows);
       scheduleEnsure(day);
+      prefetchAdjacent(day);
     }).catch(function (e) { say('Could not load: ' + e.message, true); });
+  }
+
+  function prefetchAdjacent(day) {
+    [shiftDay(day, -1), shiftDay(day, 1)].forEach(function (d) {
+      if (!CACHE[d]) fetchDay(d, false);
+    });
   }
 
   /* Materialising is a write, and switching days is now instant, so it waits
