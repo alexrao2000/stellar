@@ -124,3 +124,12 @@ def test_weight_warning_is_generous_but_catches_extreme_changes():
     assert server._weight_warning(75, previous) is None
     assert "less than half" in server._weight_warning(74.9, previous)
     assert server._weight_warning(100, None) is None
+
+
+def test_today_page_contains_accessible_weight_warning_tooltip():
+    html = server.page_today("2026-08-30")
+
+    assert 'id="weight-warning"' in html
+    assert 'aria-describedby="weight-warning-tip"' in html
+    assert 'id="weight-warning-tip"' in html
+    assert 'role="tooltip"' in html
