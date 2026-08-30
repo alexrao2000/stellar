@@ -752,6 +752,8 @@ TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 # A weigh-in outside this range is a typo, not a reading. Refuse rather than
 # write a number that would wreck the chart and need reconciling later.
 WEIGHT_MIN, WEIGHT_MAX = 50.0, 500.0
+WEIGHT_GAIN_WARNING = 20.0
+WEIGHT_LOSS_RATIO_WARNING = 0.5
 
 
 def _sb():
@@ -796,6 +798,26 @@ def _day_rows(client, day: str) -> list[dict]:
     return (
         client.table("task_history").select("*").eq("day", day).execute().data or []
     )
+
+
+def _weight_warning(lbs: float, previous: dict | None) -> str | None:
+    """Describe an extreme change while allowing unusual real measurements."""
+    if not previous or previous.get("weight_lbs") in (None, ""):
+        return None
+    prior = float(previous["weight_lbs"])
+    prior_day = str(previous.get("day") or "the previous entry")[:10]
+    change = lbs - prior
+    if change > WEIGHT_GAIN_WARNING:
+        return (
+            f"Saved, but double-check: {lbs:.1f} lbs is {change:.1f} lbs above "
+            f"your previous {prior:.1f} lbs on {prior_day}."
+        )
+    if lbs < prior * WEIGHT_LOSS_RATIO_WARNING:
+        return (
+            f"Saved, but double-check: {lbs:.1f} lbs is less than half your "
+            f"previous {prior:.1f} lbs on {prior_day}."
+        )
+    return None
 
 
 @app.post("/api/day/{day}/ensure")
@@ -950,6 +972,19 @@ def api_set_weight(day: str, lbs: float) -> dict:
     if not rows:
         raise HTTPException(404, f"no 'Weigh yourself' row for {day} -- ensure the day first.")
     row = rows[0]
+    previous_rows = (
+        client.table("task_history")
+        .select("day,weight_lbs")
+        .eq("title", "Weigh yourself")
+        .lt("day", day)
+        .filter("weight_lbs", "not.is", "null")
+        .order("day", desc=True)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    warning = _weight_warning(lbs, previous_rows[0] if previous_rows else None)
 
     notes = row.get("notes") or "Start Date+Weight: 8/8/24, 181.9 lbs, Current Weight: "
     if CURRENT_WEIGHT_CLAUSE.search(notes):
@@ -966,7 +1001,9 @@ def api_set_weight(day: str, lbs: float) -> dict:
         "completed_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", row["id"]).execute()
     _cache_apply(res.data)
-    return res.data[0]
+    result = dict(res.data[0])
+    result["warning"] = warning
+    return result
 
 
 @app.post("/api/day/{day}/wake")

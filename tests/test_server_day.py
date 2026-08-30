@@ -114,3 +114,13 @@ def test_measurement_apis_use_narrow_projections(monkeypatch):
         ("day,weight_lbs", "Weigh yourself"),
         ("day,notes", "Wake Up"),
     ]
+
+
+def test_weight_warning_is_generous_but_catches_extreme_changes():
+    previous = {"day": "2026-08-29", "weight_lbs": 150}
+
+    assert server._weight_warning(170, previous) is None
+    assert "20.1 lbs above" in server._weight_warning(170.1, previous)
+    assert server._weight_warning(75, previous) is None
+    assert "less than half" in server._weight_warning(74.9, previous)
+    assert server._weight_warning(100, None) is None
