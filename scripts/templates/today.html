@@ -128,6 +128,29 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
   font-size: .76rem; color: var(--ink-muted); min-width: 84px;
   font-family: ui-monospace, Menlo, monospace; text-transform: uppercase; letter-spacing: .06em;
 }
+.weight-label { display: flex; align-items: center; gap: 5px; }
+.weight-warning {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; color: var(--warn); cursor: help;
+  font-family: system-ui, sans-serif; font-size: .9rem; line-height: 1;
+}
+.weight-warning[hidden] { display: none; }
+.weight-warning:focus-visible { outline: 2px solid var(--warn); outline-offset: 2px; border-radius: 3px; }
+.weight-warning-tip {
+  position: absolute; z-index: 20; left: -65px; top: calc(100% + 8px);
+  width: min(300px, calc(100vw - 48px)); padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, var(--rule));
+  border-radius: 7px; background: var(--surface); color: var(--ink);
+  box-shadow: var(--shadow); font-family: system-ui, sans-serif;
+  font-size: .76rem; font-weight: 500; line-height: 1.35;
+  letter-spacing: 0; text-transform: none; visibility: hidden; opacity: 0;
+  transform: translateY(3px); transition: opacity .12s, transform .12s;
+  pointer-events: none;
+}
+.weight-warning:hover .weight-warning-tip,
+.weight-warning:focus .weight-warning-tip {
+  visibility: visible; opacity: 1; transform: translateY(0);
+}
 /* The unit rides inside the box, against its right edge, so it reads as part
    of the value rather than as a stray word at the far end of the row. */
 .field .withunit { flex: 1; min-width: 0; position: relative; display: flex; }
@@ -155,7 +178,6 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   font-family: ui-monospace, Menlo, monospace;
 }
 #status.ok { color: var(--ok); }
-#status.warn { color: var(--warn); }
 #status.bad { color: var(--bad); }
 .hint { font-size: .72rem; color: var(--ink-muted); padding: 2px 2px 6px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -180,7 +202,12 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     <h2>Measurements</h2>
     <div class="body">
       <div class="field">
-        <label for="weight">Weight</label>
+        <label for="weight" class="weight-label">Weight
+          <span id="weight-warning" class="weight-warning" role="img" tabindex="0" hidden
+                aria-describedby="weight-warning-tip">&#9888;
+            <span id="weight-warning-tip" class="weight-warning-tip" role="tooltip"></span>
+          </span>
+        </label>
         <div class="withunit">
           <input id="weight" type="number" inputmode="decimal" step="0.2" placeholder="0.0">
           <span class="unit" aria-hidden="true">lbs</span>
@@ -345,10 +372,17 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
-  function say(msg, bad, warning) {
+  function say(msg, bad) {
     var el = document.getElementById('status');
     el.textContent = msg;
-    el.className = !msg ? '' : (bad ? 'bad' : (warning ? 'warn' : 'ok'));
+    el.className = !msg ? '' : (bad ? 'bad' : 'ok');
+  }
+  function weightWarning(msg) {
+    var icon = document.getElementById('weight-warning');
+    var tip = document.getElementById('weight-warning-tip');
+    icon.hidden = !msg;
+    tip.textContent = msg || '';
+    icon.setAttribute('aria-label', msg ? 'Weight warning: ' + msg : '');
   }
   function setDone(el, done) { el.classList.toggle('done', done); }
 
@@ -386,6 +420,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
        the box -- and `saved` would suppress the save that corrects it. */
     document.getElementById('weight').value = '';
     document.getElementById('wake').value = '';
+    weightWarning('');
     saved.weight = null;
     saved.wake = null;
     rows.forEach(function (r) {
@@ -493,8 +528,10 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       post(build(v))
         .then(function (result) {
           saved[id] = v;
-          say(result.warning || describe(v), false, !!result.warning);
-          return load();                       // reflects the auto-completion
+          return load().then(function () {      // reflects the auto-completion
+            if (id === 'weight') weightWarning(result.warning || '');
+            say(describe(v));
+          });
         })
         .catch(function (e) {
           if (task && document.body.contains(task)) setDone(task, wasDone);
