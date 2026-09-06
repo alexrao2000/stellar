@@ -42,7 +42,7 @@ def read_rows(
     truncates larger tables -- task_completions passes 1000 in about four months
     -- hence the paging.
     """
-    from supabase import create_client
+    from .postgrest import create_client
 
     from concurrent.futures import ThreadPoolExecutor
 
@@ -50,9 +50,10 @@ def read_rows(
     filters = equals or {}
 
     def fetch(start: int, *, with_count: bool = False):
-        # A client per worker avoids relying on thread safety in the SDK while
-        # still overlapping Supabase round trips. The old sequential loop made
-        # a 6,221-row cold read wait for seven network latencies back-to-back.
+        # A client per worker, overlapping Supabase round trips: the old
+        # sequential loop made a 6,221-row cold read wait for seven network
+        # latencies back-to-back. These are thin wrappers over one pooled
+        # httpx client, so the workers share connections rather than racing.
         client = create_client(config.supabase_url, config.supabase_key)
         if with_count:
             query = client.table(table).select(columns, count="exact")

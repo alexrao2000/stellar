@@ -1,4 +1,3 @@
-import sys
 from types import SimpleNamespace
 
 from src.config import Config
@@ -39,8 +38,11 @@ def test_read_rows_fetches_large_tables_in_order(monkeypatch):
             assert name == "task_history"
             return Query()
 
-    fake_supabase = SimpleNamespace(create_client=lambda url, key: Client())
-    monkeypatch.setitem(sys.modules, "supabase", fake_supabase)
+    # read_rows imports create_client from src.postgrest at call time, so
+    # patching the attribute is enough -- no sys.modules surgery needed.
+    import src.postgrest
+
+    monkeypatch.setattr(src.postgrest, "create_client", lambda url, key: Client())
     config = Config(supabase_url="https://project.supabase.co", supabase_key="secret")
 
     rows = read_rows(

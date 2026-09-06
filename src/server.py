@@ -757,7 +757,10 @@ WEIGHT_LOSS_RATIO_WARNING = 0.5
 
 
 def _sb():
-    from supabase import create_client
+    # The local PostgREST shim, not the `supabase` SDK: importing that SDK costs
+    # ~680ms, and being a lazy import only moved the cost onto the first request
+    # that touches the database. See src/postgrest.py.
+    from .postgrest import create_client
 
     config = load_config()
     if not config.supabase_url or not config.supabase_key:
