@@ -179,6 +179,15 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
 }
 #status.ok { color: var(--ok); }
 #status.bad { color: var(--bad); }
+/* Shown while a day painted from the local copy is still being confirmed.
+   Deliberately quiet and non-blocking: the point is that the numbers are
+   already readable, not that something is wrong. */
+.sync {
+  font-size: .68rem; font-weight: 500; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ink-muted);
+  opacity: 0; transition: opacity .15s; margin-left: .5rem;
+}
+body.syncing .sync { opacity: .75; }
 .hint { font-size: .72rem; color: var(--ink-muted); padding: 2px 2px 6px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -222,7 +231,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   </div>
 
   <div class="card">
-    <h2>Tasks</h2>
+    <h2>Tasks<span class="sync" id="sync">checking…</span></h2>
     <div class="body" id="tasks"></div>
   </div>
 
@@ -259,6 +268,40 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
 
   var CACHE = {};
   var pending = {};
+
+  /* Last known rows per day, surviving reload and reboot. This is what makes
+     the page paint instantly instead of waiting out a cold start. It is a
+     cache, never the truth -- every day painted from it is re-read from the
+     server immediately, and the indicator says so until that lands. */
+  var STORE = 'td:', STORE_KEEP = 120;
+
+  function storeRead(day) {
+    try {
+      var raw = localStorage.getItem(STORE + day);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }             // private mode, or disabled
+  }
+
+  function storeWrite(day, rows) {
+    try {
+      localStorage.setItem(STORE + day, JSON.stringify(rows));
+      var keys = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(STORE) === 0) keys.push(k);
+      }
+      /* ISO dates sort lexically, so the oldest are simply the first. */
+      if (keys.length > STORE_KEEP) {
+        keys.sort().slice(0, keys.length - STORE_KEEP).forEach(function (k) {
+          localStorage.removeItem(k);
+        });
+      }
+    } catch (e) { /* quota or private mode -- the app is fine without it */ }
+  }
+
+  function syncing(on) {
+    document.body.classList.toggle('syncing', !!on);
+  }
   var requestVersion = {};
   var ensured = {};
 
@@ -277,7 +320,10 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       .then(function (rows) {
         delete pending[key];
         /* A slow background prefetch must never replace a newer live read. */
-        if (requestVersion[day] === version) CACHE[day] = rows;
+        if (requestVersion[day] === version) {
+          CACHE[day] = rows;
+          storeWrite(day, rows);
+        }
         return rows;
       }, function (e) { delete pending[key]; throw e; });
     return pending[key];
@@ -300,20 +346,36 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     say(ro ? 'Read-only: ' + day + ' is before ' + BOOT.floor +
              ', the reconciled history.' : '');
 
-    if (CACHE[day]) {
-      render(CACHE[day]);
+    /* Paint what we already know before touching the network. On a warm
+       instance the confirmation lands in tens of ms and nothing visibly
+       happens; on a cold one the day is readable while the server boots. */
+    var known = CACHE[day] || storeRead(day);
+    var knownJson = known ? JSON.stringify(known) : null;
+    if (known) {
+      render(known);
     } else {
       document.getElementById('tasks').innerHTML = '';
       document.getElementById('weight').value = '';
       document.getElementById('wake').value = '';
     }
+    syncing(true);
 
     return fetchDay(day, true).then(function (rows) {
       if (DAY !== day) return;                   // stepped past it while loading
-      render(rows);
+      /* Only repaint on a real difference. Re-rendering identical rows would
+         throw away focus and any half-typed measurement to show the same
+         thing, which is exactly the flicker this is meant to remove. */
+      if (JSON.stringify(rows) !== knownJson) render(rows);
+      syncing(false);
       scheduleEnsure(day);
       prefetchAdjacent(day);
-    }).catch(function (e) { say('Could not load: ' + e.message, true); });
+    }).catch(function (e) {
+      syncing(false);
+      /* With a local copy on screen this is a stale-data warning, not a
+         failure: say which it is rather than blaming the rows on display. */
+      say(known ? 'Showing the last known copy: ' + e.message
+                : 'Could not load: ' + e.message, true);
+    });
   }
 
   function prefetchAdjacent(day) {
@@ -471,6 +533,9 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
           .then(function (updated) {
             r.is_completed = next;
             if (updated && updated.weight_lbs !== undefined) r.weight_lbs = updated.weight_lbs;
+            /* `rows` is the cached array, so `r` is already the cached row --
+               persist it so a reload agrees with what is on screen. */
+            storeWrite(DAY, rows);
             say(r.title + (next ? ' done' : ' un-done'));
           })
           .catch(function (e) {
