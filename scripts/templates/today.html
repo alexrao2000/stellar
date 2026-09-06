@@ -463,13 +463,20 @@ body.syncing .sync { opacity: .75; }
     };
   }
 
+  var writesInFlight = 0;
+
   function post(url) {
+    writesInFlight++;
+    var settled = function () { writesInFlight--; };
     return fetch(url, { method: 'POST' }).then(function (res) {
       if (res.ok) return res.json();
       return res.json().catch(function () { return {}; }).then(function (j) {
         throw new Error(j.detail || ('HTTP ' + res.status));
       });
-    });
+    }).then(
+      function (v) { settled(); return v; },
+      function (e) { settled(); throw e; }
+    );
   }
 
   var WEIGH = 'Weigh yourself', WAKE = 'Wake Up';
@@ -613,6 +620,35 @@ body.syncing .sync { opacity: .75; }
   autosave('wake',
     function (v) { return '/api/day/' + DAY + '/wake?time=' + encodeURIComponent(v); },
     function (v) { return 'Wake-up saved: ' + v; });
+
+  /* Re-read the day on the quiet, and repaint only if the server disagrees.
+     Without this the page is correct when opened and drifts from then on --
+     which is exactly how it felt stale on a second computer.
+
+     No "checking..." here: that indicator is for a reader waiting on a first
+     paint, and blinking it every minute would be noise. A change that does
+     land is announced, because content rearranging itself in silence is the
+     thing that felt broken. */
+  var POLL_MS = 60000;
+
+  function revalidate() {
+    if (document.hidden || writesInFlight) return;
+    var day = DAY;
+    var before = CACHE[day] ? JSON.stringify(CACHE[day]) : null;
+    fetchDay(day, true).then(function (rows) {
+      if (DAY !== day || !before) return;
+      if (JSON.stringify(rows) !== before) {
+        render(rows);
+        say('Updated');
+      }
+    }).catch(function () { /* keep showing what we have */ });
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) revalidate();
+  });
+  window.addEventListener('focus', revalidate);
+  setInterval(revalidate, POLL_MS);
 
   /* showDay handles read-only, materialising and the window; the first call
      just points it at the day the server rendered. replace rather than push so
