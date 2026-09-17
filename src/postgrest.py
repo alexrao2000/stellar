@@ -63,6 +63,7 @@ class _Query:
         # and PostgREST treats repeated params as an AND.
         self._filters: list[tuple[str, str]] = []
         self._order: str | None = None
+        self._limit: int | None = None
         self._range: tuple[int, int] | None = None
         self._count: bool = False
 
@@ -97,12 +98,29 @@ class _Query:
         self._filters.append((column, f"eq.{value}"))
         return self
 
+    def lt(self, column: str, value) -> "_Query":
+        self._filters.append((column, f"lt.{value}"))
+        return self
+
+    def filter(self, column: str, operator: str, value) -> "_Query":
+        """Add a raw PostgREST operator, matching supabase-py's API."""
+        if not operator.strip():
+            raise ValueError(f"invalid PostgREST operator: {operator!r}")
+        self._filters.append((column, f"{operator}.{value}"))
+        return self
+
     def is_(self, column: str, value: str) -> "_Query":
         self._filters.append((column, f"is.{value}"))
         return self
 
     def order(self, column: str, desc: bool = False) -> "_Query":
         self._order = f"{column}.desc" if desc else column
+        return self
+
+    def limit(self, count: int) -> "_Query":
+        if count < 0:
+            raise ValueError(f"limit must be non-negative: {count}")
+        self._limit = count
         return self
 
     def range(self, start: int, end: int) -> "_Query":
@@ -116,6 +134,8 @@ class _Query:
             params.append(("select", self._select))
             if self._order:
                 params.append(("order", self._order))
+            if self._limit is not None:
+                params.append(("limit", str(self._limit)))
         params.extend(self._filters)
 
         headers = {
@@ -137,10 +157,15 @@ class _Query:
             headers["Content-Type"] = "application/json"
 
         url = f"{self._base}/rest/v1/{self._table}"
-        response = _http().request(
-            self._method, url, params=params, headers=headers,
-            json=self._body if self._body is not None else None,
-        )
+        try:
+            response = _http().request(
+                self._method, url, params=params, headers=headers,
+                json=self._body if self._body is not None else None,
+            )
+        except httpx.HTTPError as exc:
+            raise PostgrestError(
+                f"{self._method} {self._table} failed: {exc}"
+            ) from exc
         if response.status_code >= 400:
             raise PostgrestError(
                 f"{self._method} {self._table} -> {response.status_code}: {response.text}"

@@ -218,7 +218,7 @@ body.syncing .sync { opacity: .75; }
           </span>
         </label>
         <div class="withunit">
-          <input id="weight" type="number" inputmode="decimal" step="0.2" placeholder="0.0">
+          <input id="weight" type="number" inputmode="decimal" step="0.1" placeholder="0.0">
           <span class="unit" aria-hidden="true">lbs</span>
         </div>
       </div>
@@ -268,6 +268,9 @@ body.syncing .sync { opacity: .75; }
 
   var CACHE = {};
   var pending = {};
+  /* Per day: true = every recurring task already has a row, so the ensure POST
+     has nothing to do. Undefined means the server did not say. */
+  var complete = {};
 
   /* Last known rows per day, surviving reload and reboot. This is what makes
      the page paint instantly instead of waiting out a cold start. It is a
@@ -315,6 +318,12 @@ body.syncing .sync { opacity: .75; }
                          fresh ? { cache: 'no-store' } : {})
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
+        /* The read already knows whether this day still needs materialising.
+           Absent header means the server could not say, and we leave `complete`
+           undefined so the ensure below still runs. */
+        var flag = r.headers.get('X-Day-Complete');
+        if (flag === '1') complete[day] = true;
+        else if (flag === '0') complete[day] = false;
         return r.json();
       })
       .then(function (rows) {
@@ -393,6 +402,10 @@ body.syncing .sync { opacity: .75; }
   function scheduleEnsure(day) {
     clearTimeout(ensureTimer);
     if (!writable(day) || ensured[day]) return;
+    /* Nothing missing -- and the read that just landed said so, at no cost.
+       Materialising here would be a write round trip that inserts nothing,
+       which is what it had been doing on every day opened. */
+    if (complete[day]) { ensured[day] = true; return; }
     ensureTimer = setTimeout(function () {
       if (DAY !== day) return;
       post('/api/day/' + day + '/ensure')
@@ -486,12 +499,19 @@ body.syncing .sync { opacity: .75; }
     host.innerHTML = '';
     /* Reset before each day. The prefill below only writes when the day has a
        value, so on a day without one the previous day's reading would sit in
-       the box -- and `saved` would suppress the save that corrects it. */
-    document.getElementById('weight').value = '';
-    document.getElementById('wake').value = '';
+       the box -- and `saved` would suppress the save that corrects it.
+
+       A field being typed in is left alone. render() is no longer only a day
+       change: a save confirmation and the background revalidation both reach
+       here, and either one clearing the box mid-entry looks exactly like the
+       app eating your input. */
+    ['weight', 'wake'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (document.activeElement === el) return;
+      el.value = '';
+      saved[id] = null;
+    });
     weightWarning('');
-    saved.weight = null;
-    saved.wake = null;
     rows.forEach(function (r) {
       /* These two are readings, not checkboxes. Ticking one by hand would
          claim a measurement that was never taken, so they are resolved by
@@ -523,10 +543,38 @@ body.syncing .sync { opacity: .75; }
       }
       /* Optimistic: flip the tile now, confirm in the background. A write is
          ~160ms and re-reading the day was another ~200ms, so waiting for both
-         meant a third of a second of spinner on every tap. Revert if it
-         fails -- silently keeping a wrong state would be worse than a stutter. */
+         meant a third of a second of spinner on every tap. Rapid taps update
+         the desired state immediately and are serialized below. */
+      function syncDesired() {
+        var sent = r.is_completed;
+        b.dataset.syncing = '1';
+        post('/api/task/' + r.id + '/toggle?done=' + sent)
+          .then(function (updated) {
+            if (updated && updated.weight_lbs !== undefined) r.weight_lbs = updated.weight_lbs;
+          })
+          .catch(function (e) {
+            /* If the user clicked again, preserve that newer desired state and
+               let the next request retry it. Only revert when this request
+               still represents the visible state. */
+            if (r.is_completed === sent) {
+              r.is_completed = !sent;
+              setDone(b, !sent);
+              say(e.message, true);
+            }
+          })
+          .then(function () {
+            if (r.is_completed !== sent) {
+              syncDesired();
+              return;
+            }
+            delete b.dataset.syncing;
+            storeWrite(DAY, rows);
+            say(r.title + (sent ? ' done' : ' un-done'));
+          });
+      }
+
       b.addEventListener('click', function () {
-        if (!BOOT.writable || b.dataset.busy) return;
+        if (!BOOT.writable) return;
         if (viaField) {
           var f = document.getElementById(viaField);
           f.focus();
@@ -534,35 +582,26 @@ body.syncing .sync { opacity: .75; }
           return;
         }
         var next = !r.is_completed;
-        b.dataset.busy = '1';
+        r.is_completed = next;
         setDone(b, next);
-        post('/api/task/' + r.id + '/toggle?done=' + next)
-          .then(function (updated) {
-            r.is_completed = next;
-            if (updated && updated.weight_lbs !== undefined) r.weight_lbs = updated.weight_lbs;
-            /* `rows` is the cached array, so `r` is already the cached row --
-               persist it so a reload agrees with what is on screen. */
-            storeWrite(DAY, rows);
-            say(r.title + (next ? ' done' : ' un-done'));
-          })
-          .catch(function (e) {
-            setDone(b, !next);          // put it back
-            say(e.message, true);
-          })
-          .then(function () { delete b.dataset.busy; });
+        if (!b.dataset.syncing) syncDesired();
       });
       host.appendChild(b);
 
       /* Prefill from what is already recorded, so a re-save shows the current
          value rather than an empty box. */
       if (r.title === WEIGH && r.weight_lbs !== null && r.weight_lbs !== undefined) {
-        document.getElementById('weight').value = Number(r.weight_lbs).toFixed(1);
-        saved.weight = document.getElementById('weight').value;
+        var wEl = document.getElementById('weight');
+        if (document.activeElement !== wEl) {
+          wEl.value = Number(r.weight_lbs).toFixed(1);
+          saved.weight = wEl.value;
+        }
       }
       if (r.title === WAKE) {
         var w = wakeFromNotes(r.notes);
-        if (w) {
-          document.getElementById('wake').value = w.value;
+        var kEl = document.getElementById('wake');
+        if (w && document.activeElement !== kEl) {
+          kEl.value = w.value;
           saved.wake = w.value;
         }
       }
@@ -579,15 +618,21 @@ body.syncing .sync { opacity: .75; }
     });
   }
 
-  /* Both fields save themselves. `change` rather than `input`: on a number
-     field it fires on blur or Enter, so a value is only sent once you have
-     finished typing -- `input` would post "1", then "15", then "152". The last
-     saved value is remembered so blurring an untouched field is a no-op. */
+  /* Both fields save themselves on `change` -- which on these inputs means
+     blur or Enter, i.e. when you are done with the field.
+
+     Not a debounce on `input`. A debounce fires on any typing pause, so
+     entering 146.8 posts "1", "14", "146" on the way, and each accepted one
+     calls load() -> render(), which writes a formatted value straight into
+     the box you are still typing in. That is where the stray ".0" came from.
+     No delay is short enough to fix this: the problem is writing to a field
+     under the cursor, not how long you wait first. */
   var saved = { weight: null, wake: null };
 
   function autosave(id, build, describe) {
     var el = document.getElementById(id);
-    el.addEventListener('change', function () {
+
+    function save() {
       var v = el.value;
       if (!v || v === saved[id]) return;      // cleared, or nothing changed
       var task = document.querySelector('.task[data-field="' + id + '"]');
@@ -610,7 +655,9 @@ body.syncing .sync { opacity: .75; }
           say(e.message, true);
         })
         .then(function () { el.classList.remove('saving'); });
-    });
+    }
+
+    el.addEventListener('change', save);
   }
 
   autosave('weight',
