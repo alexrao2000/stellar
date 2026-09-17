@@ -29,6 +29,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import load_config
 from .parsers import parse_wake_up
+from .postgrest import PostgrestError
 from .read import read_rows
 from .web_auth import AuthError, AuthSession, web_auth
 
@@ -62,6 +63,16 @@ _refresh_failed: dict[str, float] = {}
 # the same sidebar as every other view. FastAPI's own page has no way back to
 # the app, which made the nav's last link a one-way door.
 app = FastAPI(title="Task Tracker", docs_url=None)
+
+
+@app.exception_handler(PostgrestError)
+async def handle_postgrest_error(_request: Request, exc: PostgrestError):
+    """Turn database/transport failures into a safe, retryable API response."""
+    log.error("database request failed: %s", exc)
+    return JSONResponse(
+        {"detail": "Database temporarily unavailable; please retry."},
+        status_code=503,
+    )
 
 # The history payload is ~1.8 MB of highly repetitive JSON. Compressed it is a
 # fraction of that, which is most of the cold-load cost on any connection
@@ -823,6 +834,23 @@ def _weight_warning(lbs: float, previous: dict | None) -> str | None:
     return None
 
 
+def _missing_recurrences(day: str, rows: list[dict]) -> list[dict]:
+    """Which recurrence definitions due on `day` have no row in `rows` yet.
+
+    Shared deliberately. api_ensure_day fills the gap; api_day reports whether
+    there is one so the page can skip the call. Two copies of this rule would
+    eventually disagree, and the failure would be silent -- a day rendering one
+    task short, with nothing raising.
+    """
+    due = [
+        d for d in _recurring_defs()
+        if (not d.get("starts_on") or d["starts_on"] <= day)
+        and (not d.get("ends_on") or d["ends_on"] >= day)
+    ]
+    present = {(r["list_title"], r["title"]) for r in rows}
+    return [d for d in due if (d["list_title"], d["title"]) not in present]
+
+
 @app.post("/api/day/{day}/ensure")
 def api_ensure_day(day: str) -> dict:
     """Materialise a day's recurring occurrences if they don't exist yet.
@@ -833,23 +861,17 @@ def api_ensure_day(day: str) -> dict:
     """
     _check_writable(day)
 
-    defs = _recurring_defs()
-    if not defs:
+    if not _recurring_defs():
         raise HTTPException(500, "recurring_tasks is empty -- apply sql/schema.sql.")
-
-    due = [
-        d for d in defs
-        if (not d.get("starts_on") or d["starts_on"] <= day)
-        and (not d.get("ends_on") or d["ends_on"] >= day)
-    ]
 
     # Always inspect only this day. On a long-lived local process the full
     # history cache made this shortcut cheap, but on Vercel it forced each cold
     # instance to download thousands of rows just to answer whether today's
     # handful already exists.
     client = _sb()
-    existing = {(r["list_title"], r["title"]) for r in _day_rows(client, day)}
-    wanted = [d for d in due if (d["list_title"], d["title"]) not in existing]
+    rows = _day_rows(client, day)
+    existing = {(r["list_title"], r["title"]) for r in rows}
+    wanted = _missing_recurrences(day, rows)
     if wanted:
         created = client.table("task_history").insert([
             {
@@ -938,6 +960,23 @@ def api_day(day: str, response: Response, fresh: bool = False) -> list[dict]:
     else:
         rows = [r for r in _task_history() if r["day"] == day]
     rows.sort(key=lambda r: (order.get(r["title"], 999), r["title"]))
+
+    # Whether this day still needs materialising, so the page can skip the
+    # ensure POST when it does not -- which is almost always. Free: the
+    # definitions are process-cached and the rows are already in hand.
+    #
+    # A header rather than a field, because this endpoint returns a bare list
+    # and several pages consume that shape. Emitted only when the answer is
+    # known: with no definitions loaded the honest answer is "no idea", and a
+    # missing header leaves the page doing what it does today.
+    try:
+        if _recurring_defs():
+            missing = _missing_recurrences(day, rows)
+            response.headers["X-Day-Complete"] = "0" if missing else "1"
+    except Exception as exc:  # noqa: BLE001
+        # Never fail a day read over an optimisation. No header, no skip.
+        log.warning("completeness check failed for %s (%s)", day, exc)
+
     return rows
 
 
@@ -972,6 +1011,12 @@ def api_set_weight(day: str, lbs: float) -> dict:
         )
     client = _sb()
     rows = [r for r in _day_rows(client, day) if r["title"] == "Weigh yourself"]
+    if not rows:
+        # The page materialises today's recurring rows asynchronously. A user
+        # can enter a weight before that request finishes, so make the write
+        # self-sufficient and retry the day-scoped lookup once.
+        api_ensure_day(day)
+        rows = [r for r in _day_rows(client, day) if r["title"] == "Weigh yourself"]
     if not rows:
         raise HTTPException(404, f"no 'Weigh yourself' row for {day} -- ensure the day first.")
     row = rows[0]

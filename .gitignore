@@ -52,3 +52,4 @@ token_rw.json
 # before purging.
 data/
 .vercel
+.env*

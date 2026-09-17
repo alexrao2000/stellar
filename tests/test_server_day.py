@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from fastapi import Response
 
 from src import server
@@ -133,3 +135,120 @@ def test_today_page_contains_accessible_weight_warning_tooltip():
     assert 'aria-describedby="weight-warning-tip"' in html
     assert 'id="weight-warning-tip"' in html
     assert 'role="tooltip"' in html
+
+
+def test_today_page_accepts_tenth_of_a_pound_steps():
+    html = server.page_today("2026-08-30")
+
+    assert 'id="weight" type="number" inputmode="decimal" step="0.1"' in html
+
+
+def test_today_page_saves_measurements_only_when_the_field_is_finished_with():
+    """Never mid-typing.
+
+    A debounce on `input` fires on any pause, so entering 146.8 posts "1",
+    "14", "146" on the way; each accepted one re-renders and writes a formatted
+    value into the box still under the cursor, which is where a stray ".0"
+    came from. `change` on these inputs means blur or Enter.
+    """
+    html = server.page_today("2026-08-30")
+
+    assert "el.addEventListener('change', save);" in html
+    assert "el.addEventListener('input'" not in html
+    assert "AUTOSAVE_DELAY_MS" not in html
+
+
+def test_today_page_never_writes_into_a_field_being_typed_in():
+    """A confirmation read or the background revalidation can land at any time.
+
+    Both reach render(), which resets and then prefills the measurement
+    fields. Either one touching a focused field looks exactly like the app
+    eating your input.
+    """
+    html = server.page_today("2026-08-30")
+
+    assert "if (document.activeElement === el) return;" in html
+    assert "if (document.activeElement !== wEl) {" in html
+    assert "if (w && document.activeElement !== kEl) {" in html
+
+
+def test_today_page_queues_rapid_task_toggles():
+    html = server.page_today("2026-08-30")
+
+    assert "function syncDesired()" in html
+    assert "if (!BOOT.writable || b.dataset.busy) return;" not in html
+    assert "if (!b.dataset.syncing) syncDesired();" in html
+
+
+def test_set_weight_materializes_today_before_saving(monkeypatch):
+    row = {
+        "id": 42,
+        "day": "2026-08-30",
+        "title": "Weigh yourself",
+        "notes": "Current Weight: 150.0 lbs",
+    }
+    updated = {**row, "weight_lbs": 150.1, "is_completed": True}
+    day_reads = iter([[], [row]])
+    ensured = []
+
+    class Query:
+        def __init__(self):
+            self.columns = ""
+
+        def select(self, columns):
+            self.columns = columns
+            return self
+
+        def eq(self, *_args):
+            return self
+
+        def lt(self, *_args):
+            return self
+
+        def filter(self, *_args):
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args):
+            return self
+
+        def update(self, *_args):
+            self.columns = "update"
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[] if self.columns != "update" else [updated])
+
+    class Client:
+        def table(self, name):
+            if name == "task_history":
+                return Query()
+            raise AssertionError(name)
+
+    monkeypatch.setattr(server, "_check_writable", lambda day: day)
+    monkeypatch.setattr(server, "_sb", lambda: Client())
+    monkeypatch.setattr(server, "_day_rows", lambda _client, _day: next(day_reads))
+    monkeypatch.setattr(
+        server,
+        "api_ensure_day",
+        lambda day: ensured.append(day) or {"day": day, "created": ["Weigh yourself"]},
+    )
+    monkeypatch.setattr(server, "_cache_apply", lambda _rows: None)
+
+    result = server.api_set_weight("2026-08-30", 150.1)
+
+    assert ensured == ["2026-08-30"]
+    assert result["weight_lbs"] == 150.1
+
+
+def test_postgrest_failures_return_a_retryable_api_error():
+    import asyncio
+    from src.postgrest import PostgrestError
+
+    response = asyncio.run(
+        server.handle_postgrest_error(None, PostgrestError("database unavailable"))
+    )
+
+    assert response.status_code == 503
