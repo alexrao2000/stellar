@@ -91,10 +91,8 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
   transition: background .12s, color .12s;
 }
 .task.done { background: var(--done-bg); color: var(--done-ink); font-weight: 400; }
-/* On .task this propagated into .val and struck the recorded number through
-   too. A descendant cannot cancel an inherited decoration, and .val is a flex
-   item -- blockified -- so the inline-block escape hatch is unavailable. Strike
-   the title itself instead. */
+/* Strike the title, not the tile: a decoration on the tile would run through
+   everything inside it, and a descendant cannot cancel an inherited one. */
 .task.done .ttl {
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--done-ink) 55%, transparent);
@@ -109,25 +107,40 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
   width: 20px; height: 20px; border-radius: 5px; flex: 0 0 auto;
   border: 2px solid currentColor; display: flex; align-items: center; justify-content: center;
 }
-.task.done .box { background: var(--done-ink); border-color: var(--done-ink); }
-.task.done .box::after {
+.task.done .box, .field.done .box { background: var(--done-ink); border-color: var(--done-ink); }
+.task.done .box::after, .field.done .box::after {
   content: ""; width: 9px; height: 5px;
   border-left: 2px solid var(--surface); border-bottom: 2px solid var(--surface);
   transform: rotate(-45deg) translate(0, -1px);
 }
 .task .ttl { flex: 1; }
-.task .val { margin-left: auto; font-family: ui-monospace, Menlo, monospace; font-size: .84rem; }
-.task .val .u { opacity: .65; }
-/* These two are resolved by their field, not by tapping. Clicking one puts the
-   cursor in the input rather than doing nothing, so the row is a signpost
-   instead of a dead control. */
-.task.viafield { cursor: text; }
 
-.field { display: flex; gap: 8px; align-items: center; padding: 4px 2px; }
+/* A measurement is its own task: the field is the tile. Solid like an open
+   task until the reading is in, then faded like a done one. With no task for
+   the day at all (an old day before it was tracked) it stays neutral, since
+   purple would claim something was due. Same geometry in every state, so
+   filling a field never shifts the layout. */
+.field {
+  display: flex; gap: 12px; align-items: center;
+  padding: 6px 12px; border-radius: 8px;
+  transition: background .12s, color .12s;
+}
 .field label {
   font-size: .76rem; color: var(--ink-muted); min-width: 84px;
   font-family: ui-monospace, Menlo, monospace; text-transform: uppercase; letter-spacing: .06em;
 }
+.field .box { display: none; }
+.field.todo, .field.done { cursor: text; }
+.field.todo .box, .field.done .box { display: flex; }
+.field.todo { background: var(--todo-bg); color: var(--todo-ink); }
+.field.todo label { color: var(--todo-ink); font-weight: 600; }
+.field.done { background: var(--done-bg); color: var(--done-ink); }
+.field.done label {
+  color: var(--done-ink);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--done-ink) 55%, transparent);
+}
+.field.done input { color: var(--done-ink); background: var(--surface); }
 .weight-label { display: flex; align-items: center; gap: 5px; }
 .weight-warning {
   position: relative; display: inline-flex; align-items: center; justify-content: center;
@@ -172,6 +185,7 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
    error. */
 .field input.saving { border-color: var(--todo-bg); }
 input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); outline-offset: 2px; }
+.field.todo input:focus-visible { outline-color: var(--todo-ink); }
 
 #status {
   margin-top: 14px; font-size: .82rem; min-height: 1.3em;
@@ -179,16 +193,6 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
 }
 #status.ok { color: var(--ok); }
 #status.bad { color: var(--bad); }
-/* Shown while a day painted from the local copy is still being confirmed.
-   Deliberately quiet and non-blocking: the point is that the numbers are
-   already readable, not that something is wrong. */
-.sync {
-  font-size: .68rem; font-weight: 500; letter-spacing: .04em;
-  text-transform: uppercase; color: var(--ink-muted);
-  opacity: 0; transition: opacity .15s; margin-left: .5rem;
-}
-body.syncing .sync { opacity: .75; }
-.hint { font-size: .72rem; color: var(--ink-muted); padding: 2px 2px 6px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
@@ -210,7 +214,8 @@ body.syncing .sync { opacity: .75; }
   <div class="card">
     <h2>Measurements</h2>
     <div class="body">
-      <div class="field">
+      <div class="field" id="field-weight">
+        <span class="box" aria-hidden="true"></span>
         <label for="weight" class="weight-label">Weight
           <span id="weight-warning" class="weight-warning" role="img" tabindex="0" hidden
                 aria-describedby="weight-warning-tip">&#9888;
@@ -222,16 +227,16 @@ body.syncing .sync { opacity: .75; }
           <span class="unit" aria-hidden="true">lbs</span>
         </div>
       </div>
-      <div class="field">
+      <div class="field" id="field-wake">
+        <span class="box" aria-hidden="true"></span>
         <label for="wake">Wake up</label>
         <input id="wake" type="time">
       </div>
-      <div class="hint">Saves as soon as you finish typing. Wake Up and Weigh yourself are completed by these fields, not by tapping.</div>
     </div>
   </div>
 
   <div class="card">
-    <h2>Tasks<span class="sync" id="sync">checking…</span></h2>
+    <h2>Tasks</h2>
     <div class="body" id="tasks"></div>
   </div>
 
@@ -302,9 +307,6 @@ body.syncing .sync { opacity: .75; }
     } catch (e) { /* quota or private mode -- the app is fine without it */ }
   }
 
-  function syncing(on) {
-    document.body.classList.toggle('syncing', !!on);
-  }
   var requestVersion = {};
   var ensured = {};
 
@@ -367,19 +369,19 @@ body.syncing .sync { opacity: .75; }
       document.getElementById('weight').value = '';
       document.getElementById('wake').value = '';
     }
-    syncing(true);
 
+    /* Confirm against the server behind the paint. Not announced: the check
+       is for the page's benefit, and a label flashing on every day change is
+       noise. A real difference repaints; a failure says so below. */
     return fetchDay(day, true).then(function (rows) {
       if (DAY !== day) return;                   // stepped past it while loading
       /* Only repaint on a real difference. Re-rendering identical rows would
          throw away focus and any half-typed measurement to show the same
          thing, which is exactly the flicker this is meant to remove. */
       if (JSON.stringify(rows) !== knownJson) render(rows);
-      syncing(false);
       scheduleEnsure(day);
       prefetchAdjacent(day);
     }).catch(function (e) {
-      syncing(false);
       /* With a local copy on screen this is a stale-data warning, not a
          failure: say which it is rather than blaming the rows on display. */
       say(known ? 'Showing the last known copy: ' + e.message
@@ -494,6 +496,30 @@ body.syncing .sync { opacity: .75; }
 
   var WEIGH = 'Weigh yourself', WAKE = 'Wake Up';
 
+  /* A measurement field's tile: 'todo' while the reading is due, 'done' once
+     it is in, '' when the day has no such task. */
+  function setTile(id, state) {
+    var tile = document.getElementById('field-' + id);
+    tile.classList.toggle('todo', state === 'todo');
+    tile.classList.toggle('done', state === 'done');
+  }
+  function tileState(id) {
+    var tile = document.getElementById('field-' + id);
+    return tile.classList.contains('done') ? 'done'
+         : tile.classList.contains('todo') ? 'todo' : '';
+  }
+  /* Clicking anywhere on the tile goes to its input, as tapping a task does. */
+  ['weight', 'wake'].forEach(function (id) {
+    document.getElementById('field-' + id).addEventListener('click', function (e) {
+      var input = document.getElementById(id);
+      if (e.target === input || input.disabled) return;
+      input.focus();
+      if (id === 'wake' && input.showPicker) {
+        try { input.showPicker(); } catch (err) { /* not a user gesture */ }
+      }
+    });
+  });
+
   function render(rows) {
     var host = document.getElementById('tasks');
     host.innerHTML = '';
@@ -506,6 +532,7 @@ body.syncing .sync { opacity: .75; }
        here, and either one clearing the box mid-entry looks exactly like the
        app eating your input. */
     ['weight', 'wake'].forEach(function (id) {
+      setTile(id, '');
       var el = document.getElementById(id);
       if (document.activeElement === el) return;
       el.value = '';
@@ -513,29 +540,35 @@ body.syncing .sync { opacity: .75; }
     });
     weightWarning('');
     rows.forEach(function (r) {
-      /* These two are readings, not checkboxes. Ticking one by hand would
-         claim a measurement that was never taken, so they are resolved by
-         their field and clicking the row just goes there. */
-      var viaField = r.title === WEIGH ? 'weight' : (r.title === WAKE ? 'wake' : null);
+      /* These two are readings, not checkboxes, and their field is their
+         tile -- a second tile in Tasks would only repeat it. Prefill from what
+         is recorded, so a re-save shows the current value, not an empty box. */
+      if (r.title === WEIGH) {
+        setTile('weight', r.is_completed ? 'done' : 'todo');
+        if (r.weight_lbs !== null && r.weight_lbs !== undefined) {
+          var wEl = document.getElementById('weight');
+          if (document.activeElement !== wEl) {
+            wEl.value = Number(r.weight_lbs).toFixed(1);
+            saved.weight = wEl.value;
+          }
+        }
+        return;
+      }
+      if (r.title === WAKE) {
+        setTile('wake', r.is_completed ? 'done' : 'todo');
+        var w = wakeFromNotes(r.notes);
+        var kEl = document.getElementById('wake');
+        if (w && document.activeElement !== kEl) {
+          kEl.value = w.value;
+          saved.wake = w.value;
+        }
+        return;
+      }
 
       var b = document.createElement('button');
       b.type = 'button';
-      b.className = 'task' + (r.is_completed ? ' done' : '') + (viaField ? ' viafield' : '');
-      var extra = '';
-      if (r.title === WEIGH && r.weight_lbs !== null && r.weight_lbs !== undefined) {
-        extra = '<span class="val">' + Number(r.weight_lbs).toFixed(1) +
-          ' <span class="u">lbs</span></span>';
-      }
-      if (r.title === WAKE) {
-        var wk = wakeFromNotes(r.notes);
-        if (wk) extra = '<span class="val">' + esc(wk.display) + '</span>';
-      }
-      b.innerHTML = '<span class="box"></span><span class="ttl">' + esc(r.title) +
-        '</span>' + extra;
-      if (viaField) {
-        b.dataset.field = viaField;
-        b.title = 'Set by the ' + (viaField === 'weight' ? 'Weight' : 'Wake up') + ' field above';
-      }
+      b.className = 'task' + (r.is_completed ? ' done' : '');
+      b.innerHTML = '<span class="box"></span><span class="ttl">' + esc(r.title) + '</span>';
       if (!BOOT.writable) {
         b.disabled = true;
         b.style.cursor = 'default';
@@ -575,36 +608,12 @@ body.syncing .sync { opacity: .75; }
 
       b.addEventListener('click', function () {
         if (!BOOT.writable) return;
-        if (viaField) {
-          var f = document.getElementById(viaField);
-          f.focus();
-          if (f.showPicker) { try { f.showPicker(); } catch (e) { /* not user-gesture */ } }
-          return;
-        }
         var next = !r.is_completed;
         r.is_completed = next;
         setDone(b, next);
         if (!b.dataset.syncing) syncDesired();
       });
       host.appendChild(b);
-
-      /* Prefill from what is already recorded, so a re-save shows the current
-         value rather than an empty box. */
-      if (r.title === WEIGH && r.weight_lbs !== null && r.weight_lbs !== undefined) {
-        var wEl = document.getElementById('weight');
-        if (document.activeElement !== wEl) {
-          wEl.value = Number(r.weight_lbs).toFixed(1);
-          saved.weight = wEl.value;
-        }
-      }
-      if (r.title === WAKE) {
-        var w = wakeFromNotes(r.notes);
-        var kEl = document.getElementById('wake');
-        if (w && document.activeElement !== kEl) {
-          kEl.value = w.value;
-          saved.wake = w.value;
-        }
-      }
     });
   }
 
@@ -635,12 +644,11 @@ body.syncing .sync { opacity: .75; }
     function save() {
       var v = el.value;
       if (!v || v === saved[id]) return;      // cleared, or nothing changed
-      var task = document.querySelector('.task[data-field="' + id + '"]');
-      var wasDone = task ? task.classList.contains('done') : false;
+      var was = tileState(id);
       /* A measurement resolves its task by definition. Show that result at
          input speed; Vercel's write plus confirmation read can take long
          enough for a network-gated checkmark to feel broken. */
-      if (task) setDone(task, true);
+      setTile(id, 'done');
       el.classList.add('saving');
       post(build(v))
         .then(function (result) {
@@ -651,7 +659,7 @@ body.syncing .sync { opacity: .75; }
           });
         })
         .catch(function (e) {
-          if (task && document.body.contains(task)) setDone(task, wasDone);
+          setTile(id, was);
           say(e.message, true);
         })
         .then(function () { el.classList.remove('saving'); });
