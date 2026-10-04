@@ -123,6 +123,37 @@ drop policy if exists "anon reads task_history" on public.task_history;
 revoke select on public.task_history from anon, authenticated;
 revoke insert, update, delete, truncate on public.task_history from anon, authenticated;
 
+-- The server reaches these through PostgREST with the secret key, which is the
+-- service_role. RLS does not apply to it, but table grants still do.
+--
+-- Supabase used to grant this automatically on every new public table. From
+-- 2026-10-30 it stops, so a fresh apply of this file would create tables the
+-- app cannot reach -- every request a permission error. Existing tables keep
+-- their grants; this only matters when the schema is applied from scratch.
+-- Re-running it against the live project is a no-op: GRANT is idempotent.
+--
+-- service_role only. anon and authenticated stay without grants, because
+-- nothing in the browser talks to PostgREST (see the revokes above).
+-- Supabase's own migration example grants anon SELECT and authenticated full
+-- CRUD; copying it here would reopen exactly what those revokes closed.
+grant select, insert, update, delete on
+    public.task_completions,
+    public.wake_up_log,
+    public.heartbeat,
+    public.weight_log,
+    public.task_history,
+    public.recurring_tasks
+to service_role;
+
+-- A bigserial id draws from a sequence, and INSERT needs its own privilege on
+-- that. Without it every read works and every insert fails -- materialising a
+-- day among them. Supabase's notice covers tables only; granting explicitly
+-- costs nothing if sequences keep their default privileges.
+grant usage on sequence
+    public.task_history_id_seq,
+    public.recurring_tasks_id_seq
+to service_role;
+
 -- --------------------------------------------------------------------------
 -- The pool: non-recurring, undated work, drawn as a constellation.
 --
@@ -161,3 +192,11 @@ create table if not exists public.pool_edges (
 
 alter table public.pool_tasks enable row level security;
 alter table public.pool_edges enable row level security;
+
+-- service_role only, for the same reasons as the grants above.
+grant select, insert, update, delete on
+    public.pool_tasks,
+    public.pool_edges
+to service_role;
+
+grant usage on sequence public.pool_tasks_id_seq to service_role;
