@@ -252,3 +252,20 @@ def test_postgrest_failures_return_a_retryable_api_error():
     )
 
     assert response.status_code == 503
+
+
+def test_today_page_measurement_fields_are_their_own_task_tiles():
+    """Weight and wake-up are one control each, not a field plus a task tile.
+
+    The field carries the task's state -- solid while due, faded once filled --
+    and the Tasks list no longer repeats them. The hint explaining the old
+    two-control arrangement goes with it.
+    """
+    html = server.page_today("2026-08-30")
+
+    assert 'id="field-weight"' in html
+    assert 'id="field-wake"' in html
+    assert "setTile('weight', r.is_completed ? 'done' : 'todo');" in html
+    assert "setTile('wake', r.is_completed ? 'done' : 'todo');" in html
+    assert ".task[data-field=" not in html
+    assert "Saves as soon as you finish typing" not in html
