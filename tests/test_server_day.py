@@ -17,7 +17,7 @@ def test_fresh_day_bypasses_process_history_cache(monkeypatch):
 
     monkeypatch.setattr(server, "_sb", lambda: object())
     monkeypatch.setattr(server, "_day_rows", lambda client, day: [row])
-    monkeypatch.setattr(server, "_sort_order", lambda: {"Wake Up": 1})
+    monkeypatch.setattr(server, "_definitions", lambda fresh=False: [])
     monkeypatch.setattr(
         server,
         "_task_history",
@@ -269,3 +269,117 @@ def test_today_page_measurement_fields_are_their_own_task_tiles():
     assert "setTile('wake', r.is_completed ? 'done' : 'todo');" in html
     assert ".task[data-field=" not in html
     assert "Saves as soon as you finish typing" not in html
+
+
+def _defn(id_, title, sort_order=0, created_at="2026-08-01T00:00:00+00:00", active=True):
+    return {"id": id_, "list_title": "Daily", "title": title, "sort_order": sort_order,
+            "created_at": created_at, "active": active, "starts_on": None, "ends_on": None}
+
+
+def test_default_order_is_measurements_first_then_creation():
+    """With no order chosen, measurements lead; each group goes by creation."""
+    defs = [
+        _defn(1, "Brush Teeth", created_at="2026-08-01T00:00:00+00:00"),
+        _defn(2, "Run", created_at="2026-07-01T00:00:00+00:00"),
+        _defn(7, "Wake Up"),
+        _defn(8, "Weigh yourself"),
+    ]
+    m = {"Weigh yourself", "Wake Up"}
+    ordered = sorted(defs, key=lambda d: server._definitions_order_key(d, m))
+    assert [d["title"] for d in ordered] == ["Wake Up", "Weigh yourself", "Run", "Brush Teeth"]
+
+
+def test_a_chosen_order_overrides_the_default():
+    defs = [_defn(7, "Wake Up", 3), _defn(8, "Weigh yourself", 1), _defn(1, "Run", 2)]
+    m = {"Weigh yourself", "Wake Up"}
+    ordered = sorted(defs, key=lambda d: server._definitions_order_key(d, m))
+    assert [d["title"] for d in ordered] == ["Weigh yourself", "Run", "Wake Up"]
+
+
+def test_day_read_lists_rows_in_definition_order(monkeypatch):
+    defs = [_defn(1, "Run", 1), _defn(8, "Weigh yourself", 2), _defn(7, "Wake Up", 3)]
+    rows = [{"id": i, "day": "2026-10-05", "list_title": "Daily", "title": t}
+            for i, t in enumerate(["Wake Up", "Weigh yourself", "Run", "Retired habit"])]
+    monkeypatch.setattr(server, "_definitions", lambda fresh=False: defs)
+    monkeypatch.setattr(server, "_sb", lambda: object())
+    monkeypatch.setattr(server, "_day_rows", lambda client, day: rows)
+
+    result = server.api_day("2026-10-05", Response(), fresh=True)
+
+    # A title with no definition (a habit that has since gone) goes last.
+    assert [r["title"] for r in result] == ["Run", "Weigh yourself", "Wake Up", "Retired habit"]
+
+
+class _OrderClient:
+    def __init__(self):
+        self.writes = []
+
+    def table(self, name):
+        assert name == "recurring_tasks"
+        client = self
+
+        class Q:
+            def update(self, values):
+                self.values = values
+                return self
+
+            def eq(self, column, value):
+                assert column == "id"
+                client.writes.append((value, self.values["sort_order"]))
+                return self
+
+            def execute(self):
+                return SimpleNamespace(data=[])
+
+        return Q()
+
+
+def _order_setup(monkeypatch, defs):
+    client = _OrderClient()
+    monkeypatch.setattr(server, "_definitions", lambda fresh=False: defs)
+    monkeypatch.setattr(server, "_sb", lambda: client)
+    return client
+
+
+def test_saving_an_order_writes_only_the_positions_that_changed(monkeypatch):
+    defs = [_defn(7, "Wake Up", 1), _defn(8, "Weigh yourself", 2), _defn(1, "Run", 3)]
+    client = _order_setup(monkeypatch, defs)
+
+    result = server.api_task_order(server.TaskOrderBody(titles=["Weigh yourself", "Wake Up", "Run"]))
+
+    assert result["order"] == ["Weigh yourself", "Wake Up", "Run"]
+    assert sorted(client.writes) == [(7, 2), (8, 1)]      # Run stayed at 3: not written
+
+
+def test_saving_a_partial_order_never_drops_a_task(monkeypatch):
+    """Unknown titles are ignored; unsent active tasks keep their place after."""
+    defs = [_defn(7, "Wake Up"), _defn(8, "Weigh yourself"), _defn(1, "Run"),
+            _defn(9, "Old habit", active=False)]
+    client = _order_setup(monkeypatch, defs)
+
+    result = server.api_task_order(
+        server.TaskOrderBody(titles=["Run", "Some retired title", "Old habit"]))
+
+    assert result["order"] == ["Run", "Wake Up", "Weigh yourself"]
+    assert sorted(client.writes) == [(1, 1), (7, 2), (8, 3)]
+
+
+def test_saving_an_order_rejects_a_repeated_title(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    _order_setup(monkeypatch, [_defn(1, "Run")])
+    with pytest.raises(HTTPException) as err:
+        server.api_task_order(server.TaskOrderBody(titles=["Run", "Run"]))
+    assert err.value.status_code == 400
+
+
+def test_today_page_lists_measurements_and_tasks_in_one_reorderable_list():
+    html = server.page_today("2026-08-30")
+
+    assert "<h2>Measurements</h2>" not in html
+    tasks = html.index('id="tasks"')
+    assert html.index('id="item-weight"') > tasks
+    assert html.index('id="item-wake"') > tasks
+    assert "post('/api/task_order', { titles: ORDER })" in html
+    assert "innerHTML = ''" not in html        # the list is never wiped wholesale

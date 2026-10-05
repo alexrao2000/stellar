@@ -115,6 +115,24 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
 }
 .task .ttl { flex: 1; }
 
+/* Every entry -- measurement or task -- is a tile with a drag handle beside
+   it. The handle sits outside the tile so tapping a tile still ticks it and a
+   field can still be typed in; only the handle moves things. */
+.item { display: flex; gap: 6px; align-items: stretch; }
+.item > .task, .item > .field { flex: 1; min-width: 0; }
+.grip {
+  flex: 0 0 30px; display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--ink-muted); padding: 0;
+  border-radius: 8px; cursor: grab; touch-action: none;
+}
+.grip svg { fill: currentColor; }
+.grip:hover { background: var(--surface-2); color: var(--ink); }
+.item.dragging { position: relative; z-index: 1; }
+.item.dragging > .task, .item.dragging > .field {
+  box-shadow: 0 6px 18px rgba(25, 22, 39, .22);
+}
+body.reordering, body.reordering * { cursor: grabbing !important; user-select: none; }
+
 /* A measurement is its own task: the field is the tile. Solid like an open
    task until the reading is in, then faded like a done one. With no task for
    the day at all (an old day before it was tracked) it stays neutral, since
@@ -212,32 +230,31 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   </header>
 
   <div class="card">
-    <h2>Measurements</h2>
-    <div class="body">
-      <div class="field" id="field-weight">
-        <span class="box" aria-hidden="true"></span>
-        <label for="weight" class="weight-label">Weight
-          <span id="weight-warning" class="weight-warning" role="img" tabindex="0" hidden
-                aria-describedby="weight-warning-tip">&#9888;
-            <span id="weight-warning-tip" class="weight-warning-tip" role="tooltip"></span>
-          </span>
-        </label>
-        <div class="withunit">
-          <input id="weight" type="number" inputmode="decimal" step="0.1" placeholder="0.0">
-          <span class="unit" aria-hidden="true">lbs</span>
+    <h2>Tasks</h2>
+    <div class="body" id="tasks">
+      <div class="item" id="item-weight">
+        <div class="field" id="field-weight">
+          <span class="box" aria-hidden="true"></span>
+          <label for="weight" class="weight-label">Weight
+            <span id="weight-warning" class="weight-warning" role="img" tabindex="0" hidden
+                  aria-describedby="weight-warning-tip">&#9888;
+              <span id="weight-warning-tip" class="weight-warning-tip" role="tooltip"></span>
+            </span>
+          </label>
+          <div class="withunit">
+            <input id="weight" type="number" inputmode="decimal" step="0.1" placeholder="0.0">
+            <span class="unit" aria-hidden="true">lbs</span>
+          </div>
         </div>
       </div>
-      <div class="field" id="field-wake">
-        <span class="box" aria-hidden="true"></span>
-        <label for="wake">Wake up</label>
-        <input id="wake" type="time">
+      <div class="item" id="item-wake">
+        <div class="field" id="field-wake">
+          <span class="box" aria-hidden="true"></span>
+          <label for="wake">Wake up</label>
+          <input id="wake" type="time">
+        </div>
       </div>
     </div>
-  </div>
-
-  <div class="card">
-    <h2>Tasks</h2>
-    <div class="body" id="tasks"></div>
   </div>
 
   <div id="status"></div>
@@ -273,6 +290,39 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
 
   var CACHE = {};
   var pending = {};
+
+  /* The list order, as titles: what the server says, plus any drag made here
+     since. Kept locally so a day painted from the cache comes out in the new
+     order straight away rather than in the old one and then jumping. Not under
+     the td: prefix, which is pruned as a set of days. */
+  var ORDER_KEY = 'task-order';
+  var ORDER = (function () {
+    try { return JSON.parse(localStorage.getItem(ORDER_KEY)) || []; }
+    catch (e) { return []; }
+  })();
+  /* Bumped by every local reorder. A read that started before one must not
+     teach us the order it replaced. */
+  var orderVersion = 0;
+
+  function setOrder(order) {
+    ORDER = order;
+    try { localStorage.setItem(ORDER_KEY, JSON.stringify(order)); } catch (e) { /* fine */ }
+  }
+
+  /* Lay `sub` -- the titles one day shows, in its order -- over `base`. Titles
+     the day does not show keep their places, so learning from or dragging on a
+     day that lacks some task never loses that task's position. */
+  function mergeOrder(base, sub) {
+    var inSub = {}, known = {};
+    sub.forEach(function (t) { inSub[t] = true; });
+    base.forEach(function (t) { known[t] = true; });
+    var out = base.slice(), slots = [];
+    out.forEach(function (t, i) { if (inSub[t]) slots.push(i); });
+    var placed = sub.filter(function (t) { return known[t]; });
+    slots.forEach(function (s, k) { out[s] = placed[k]; });
+    sub.forEach(function (t) { if (!known[t]) out.push(t); });
+    return out;
+  }
   /* Per day: true = every recurring task already has a row, so the ensure POST
      has nothing to do. Undefined means the server did not say. */
   var complete = {};
@@ -316,6 +366,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     if (pending[key]) return pending[key];
     var version = (requestVersion[day] || 0) + 1;
     requestVersion[day] = version;
+    var orderAtStart = orderVersion;
     pending[key] = fetch('/api/day/' + day + (fresh ? '?fresh=true' : ''),
                          fresh ? { cache: 'no-store' } : {})
       .then(function (r) {
@@ -334,6 +385,15 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
         if (requestVersion[day] === version) {
           CACHE[day] = rows;
           storeWrite(day, rows);
+        }
+        /* The server's order, learned from a live read of a current day that
+           has both measurements -- an old day lists tasks that no longer run,
+           and a not-yet-filled day lists none. Skipped if a reorder happened
+           here since the request left, or one is still being saved. */
+        var titles = rows.map(function (r) { return r.title; });
+        if (fresh && writable(day) && orderAtStart === orderVersion && !orderSaving &&
+            titles.indexOf(WEIGH) >= 0 && titles.indexOf(WAKE) >= 0) {
+          setOrder(mergeOrder(ORDER, titles));
         }
         return rows;
       }, function (e) { delete pending[key]; throw e; });
@@ -362,13 +422,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
        happens; on a cold one the day is readable while the server boots. */
     var known = CACHE[day] || storeRead(day);
     var knownJson = known ? JSON.stringify(known) : null;
-    if (known) {
-      render(known);
-    } else {
-      document.getElementById('tasks').innerHTML = '';
-      document.getElementById('weight').value = '';
-      document.getElementById('wake').value = '';
-    }
+    render(known || []);
 
     /* Confirm against the server behind the paint. Not announced: the check
        is for the page's benefit, and a label flashing on every day change is
@@ -480,10 +534,15 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
 
   var writesInFlight = 0;
 
-  function post(url) {
+  function post(url, body) {
     writesInFlight++;
     var settled = function () { writesInFlight--; };
-    return fetch(url, { method: 'POST' }).then(function (res) {
+    var opts = { method: 'POST' };
+    if (body !== undefined) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    return fetch(url, opts).then(function (res) {
       if (res.ok) return res.json();
       return res.json().catch(function () { return {}; }).then(function (j) {
         throw new Error(j.detail || ('HTTP ' + res.status));
@@ -522,7 +581,12 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
 
   function render(rows) {
     var host = document.getElementById('tasks');
-    host.innerHTML = '';
+    /* Drop the last day's task entries. The two measurement entries are
+       permanent nodes and stay put: removing one would blur a field being
+       typed in, and blur saves. */
+    Array.prototype.slice.call(host.querySelectorAll('.item.task-item'))
+      .forEach(function (n) { n.remove(); });
+    var entries = [], seen = {};
     /* Reset before each day. The prefill below only writes when the day has a
        value, so on a day without one the previous day's reading would sit in
        the box -- and `saved` would suppress the save that corrects it.
@@ -544,6 +608,8 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
          tile -- a second tile in Tasks would only repeat it. Prefill from what
          is recorded, so a re-save shows the current value, not an empty box. */
       if (r.title === WEIGH) {
+        entries.push({ title: r.title, node: document.getElementById('item-weight'), seq: entries.length });
+        seen.weight = true;
         setTile('weight', r.is_completed ? 'done' : 'todo');
         if (r.weight_lbs !== null && r.weight_lbs !== undefined) {
           var wEl = document.getElementById('weight');
@@ -555,6 +621,8 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
         return;
       }
       if (r.title === WAKE) {
+        entries.push({ title: r.title, node: document.getElementById('item-wake'), seq: entries.length });
+        seen.wake = true;
         setTile('wake', r.is_completed ? 'done' : 'todo');
         var w = wakeFromNotes(r.notes);
         var kEl = document.getElementById('wake');
@@ -613,9 +681,141 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
         setDone(b, next);
         if (!b.dataset.syncing) syncDesired();
       });
-      host.appendChild(b);
+      var item = document.createElement('div');
+      item.className = 'item task-item';
+      item.dataset.title = r.title;
+      item.appendChild(b);
+      item.appendChild(makeGrip(r.title));
+      entries.push({ title: r.title, node: item, seq: entries.length });
     });
+
+    /* A day without a measurement task -- before it was tracked -- still
+       shows the field, neutral, where the order puts it. */
+    if (!seen.weight) entries.push({ title: WEIGH, node: document.getElementById('item-weight'), seq: -2 });
+    if (!seen.wake) entries.push({ title: WAKE, node: document.getElementById('item-wake'), seq: -1 });
+
+    var rank = {};
+    ORDER.forEach(function (t, i) { rank[t] = i; });
+    entries.sort(function (a, b) {
+      var ra = a.title in rank ? rank[a.title] : Infinity;
+      var rb = b.title in rank ? rank[b.title] : Infinity;
+      return ra !== rb ? (ra < rb ? -1 : 1) : a.seq - b.seq;
+    });
+    arrange(host, entries.map(function (e) { return e.node; }));
   }
+
+  /* Put `nodes` in order without ever moving the one holding focus. Moving a
+     focused node blurs it, and a blurred measurement field saves whatever is
+     half-typed in it -- so everything else moves around it instead. */
+  function arrange(host, nodes) {
+    var anchor = null;
+    nodes.forEach(function (n) { if (n.contains(document.activeElement)) anchor = n; });
+    if (!anchor) {
+      nodes.forEach(function (n, i) {
+        if (host.children[i] !== n) host.insertBefore(n, host.children[i] || null);
+      });
+      return;
+    }
+    var k = nodes.indexOf(anchor), ref = anchor;
+    nodes.slice(0, k).forEach(function (n) { host.insertBefore(n, anchor); });
+    nodes.slice(k + 1).forEach(function (n) { host.insertBefore(n, ref.nextSibling); ref = n; });
+  }
+
+  var GRIP = '<svg width="12" height="18" viewBox="0 0 12 18" aria-hidden="true" focusable="false">' +
+    '<circle cx="3" cy="3" r="1.6"/><circle cx="9" cy="3" r="1.6"/>' +
+    '<circle cx="3" cy="9" r="1.6"/><circle cx="9" cy="9" r="1.6"/>' +
+    '<circle cx="3" cy="15" r="1.6"/><circle cx="9" cy="15" r="1.6"/></svg>';
+
+  function makeGrip(title) {
+    var g = document.createElement('button');
+    g.type = 'button';
+    g.className = 'grip';
+    g.setAttribute('aria-label', 'Move ' + title + ' (arrow keys)');
+    g.innerHTML = GRIP;
+    return g;
+  }
+
+  /* ---- reordering --------------------------------------------------------
+     Drag a handle, by mouse or touch; or focus one and use the arrow keys. The
+     list rearranges as you go and the new order is saved when you let go. */
+  var orderSaving = false, orderTimer = null;
+
+  function shownOrder() {
+    return Array.prototype.map.call(
+      document.querySelectorAll('#tasks > .item'), function (n) { return n.dataset.title; });
+  }
+
+  function saveOrder() {
+    clearTimeout(orderTimer);
+    orderVersion++;
+    setOrder(mergeOrder(ORDER, shownOrder()));
+    orderSaving = true;
+    post('/api/task_order', { titles: ORDER })
+      .catch(function (e) { say('Could not save the order: ' + e.message, true); })
+      .then(function () { orderSaving = false; });
+  }
+  function saveOrderSoon() {
+    clearTimeout(orderTimer);
+    orderVersion++;
+    orderTimer = setTimeout(saveOrder, 600);
+  }
+
+  (function () {
+    var host = document.getElementById('tasks');
+    document.getElementById('item-weight').dataset.title = WEIGH;
+    document.getElementById('item-wake').dataset.title = WAKE;
+    document.getElementById('item-weight').appendChild(makeGrip(WEIGH));
+    document.getElementById('item-wake').appendChild(makeGrip(WAKE));
+
+    var drag = null;
+    function move(e) {
+      var item = drag.item, before = null;
+      var others = Array.prototype.filter.call(host.children, function (n) { return n !== item; });
+      for (var i = 0; i < others.length; i++) {
+        var r = others[i].getBoundingClientRect();
+        if (e.clientY < r.top + r.height / 2) { before = others[i]; break; }
+      }
+      if (item.nextElementSibling !== before) {
+        host.insertBefore(item, before);
+        drag.moved = true;
+      }
+    }
+    function end() {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      drag.item.classList.remove('dragging');
+      document.body.classList.remove('reordering');
+      if (drag.moved) saveOrder();
+      drag = null;
+    }
+    host.addEventListener('pointerdown', function (e) {
+      var grip = e.target.closest && e.target.closest('.grip');
+      if (!grip || e.button > 0 || drag) return;
+      e.preventDefault();
+      drag = { item: grip.closest('.item'), moved: false };
+      drag.item.classList.add('dragging');
+      document.body.classList.add('reordering');
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
+    });
+    host.addEventListener('keydown', function (e) {
+      var grip = e.target.closest && e.target.closest('.grip');
+      if (!grip || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+      e.preventDefault();
+      var item = grip.closest('.item');
+      if (e.key === 'ArrowUp' && item.previousElementSibling) {
+        host.insertBefore(item, item.previousElementSibling);
+        grip.focus();
+      } else if (e.key === 'ArrowDown' && item.nextElementSibling) {
+        host.insertBefore(item.nextElementSibling, item);
+      } else {
+        return;
+      }
+      saveOrderSoon();
+    });
+  })();
 
   /* After a write the cached copy of the day is stale, so drop it and let
      fetchDay repopulate. The rest of the window is untouched. */

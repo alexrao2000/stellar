@@ -277,7 +277,7 @@ def _cached(key: str, build, ttl: float = CACHE_TTL):
     These are reads of data that changes rarely -- the history, the recurrence
     definitions, their sort order. A momentary DNS failure used to turn the
     first request after the TTL lapsed into a 500, on the hottest path there
-    is: /api/day goes through _sort_order(), so every fifteen minutes one day
+    is: /api/day goes through _definitions(), so every fifteen minutes one day
     view was one blip away from an error page. Writes are deliberately not
     covered by this; a save that cannot reach the database must still fail.
     """
@@ -834,16 +834,19 @@ def _weight_warning(lbs: float, previous: dict | None) -> str | None:
     return None
 
 
-def _missing_recurrences(day: str, rows: list[dict]) -> list[dict]:
+def _missing_recurrences(
+    day: str, rows: list[dict], defs: list[dict] | None = None
+) -> list[dict]:
     """Which recurrence definitions due on `day` have no row in `rows` yet.
 
     Shared deliberately. api_ensure_day fills the gap; api_day reports whether
     there is one so the page can skip the call. Two copies of this rule would
     eventually disagree, and the failure would be silent -- a day rendering one
-    task short, with nothing raising.
+    task short, with nothing raising. `defs` lets a caller that has just read
+    the definitions pass them in rather than read them twice.
     """
     due = [
-        d for d in _recurring_defs()
+        d for d in (_recurring_defs() if defs is None else defs)
         if (not d.get("starts_on") or d["starts_on"] <= day)
         and (not d.get("ends_on") or d["ends_on"] >= day)
     ]
@@ -914,31 +917,60 @@ def api_ensure_range(start: str, end: str) -> dict:
     return {"start": start, "end": end, "days_touched": len(created), "created": created}
 
 
-def _recurring_defs() -> list[dict]:
-    """Active recurrence definitions, cached.
+def _measurement_titles() -> set[str]:
+    config = load_config()
+    return {config.weight_task_title, config.wake_up_task_title}
 
-    _sort_order() already caches a projection of this same table; this is the
-    whole row, which materialising needs. Uncached it was a live query on every
-    day change.
+
+def _definitions_order_key(d: dict, measurements: set[str]) -> tuple:
+    """Where a definition sits on the Today page.
+
+    An explicit sort_order -- set by dragging -- wins. Until one is set the
+    definitions share sort_order 0 and fall back to the default: measurements
+    above tasks, each group in the order the definitions were created.
+    """
+    return (
+        d.get("sort_order") or 0,
+        0 if d["title"] in measurements else 1,
+        d.get("created_at") or "",
+        d.get("id") or 0,
+    )
+
+
+def _definitions(fresh: bool = False) -> list[dict]:
+    """Every recurrence definition, active or not, in the order the page lists them.
+
+    One read serves both the order and materialising; there used to be two
+    caches of this one 8-row table, and two queries on a cold instance.
+
+    `fresh` reads it live. The visible day asks for that because the order is
+    now editable: a cache per server instance would show a new order on one
+    device and the old one on another for up to fifteen minutes. The read is a
+    handful of rows from a database in the same region, and a failure falls
+    back to whatever this instance last had.
     """
     def build():
-        return (
-            _sb().table("recurring_tasks").select("*").eq("active", True)
-            .order("sort_order").execute().data or []
-        )
+        rows = _sb().table("recurring_tasks").select("*").execute().data or []
+        measurements = _measurement_titles()
+        return sorted(rows, key=lambda d: _definitions_order_key(d, measurements))
 
-    return _cached("recurring_defs", build)
+    if fresh:
+        try:
+            defs = build()
+        except Exception as exc:  # noqa: BLE001
+            if _cache.get("definitions") is None:
+                raise
+            log.warning("live read of definitions failed (%s); using the cached copy", exc)
+            return _cache["definitions"][1]
+        _cache["definitions"] = (time.monotonic(), defs)
+        _refresh_failed.pop("definitions", None)
+        return defs
+    return _cached("definitions", build)
 
 
-def _sort_order() -> dict[str, int]:
-    """title -> sort_order, cached; it changes only when habits are edited."""
-    def build():
-        rows = (
-            _sb().table("recurring_tasks").select("title,sort_order").execute().data or []
-        )
-        return {r["title"]: r["sort_order"] for r in rows}
-
-    return _cached("sort_order", build)
+def _recurring_defs() -> list[dict]:
+    """Active recurrence definitions -- what is due -- in page order."""
+    return [d for d in _definitions() if d.get("active")]
 
 
 @app.get("/api/day/{day}")
@@ -953,13 +985,14 @@ def api_day(day: str, response: Response, fresh: bool = False) -> list[dict]:
     or measurements appear to move backwards after a refresh.
     """
     _check_day(day)
-    order = _sort_order()
+    defs = _definitions(fresh=fresh)
+    position = {d["title"]: i for i, d in enumerate(defs)}
     if fresh:
         response.headers["Cache-Control"] = "no-store"
         rows = [_shape(r) for r in _day_rows(_sb(), day)]
     else:
         rows = [r for r in _task_history() if r["day"] == day]
-    rows.sort(key=lambda r: (order.get(r["title"], 999), r["title"]))
+    rows.sort(key=lambda r: (position.get(r["title"], len(position)), r["title"]))
 
     # Whether this day still needs materialising, so the page can skip the
     # ensure POST when it does not -- which is almost always. Free: the
@@ -970,14 +1003,56 @@ def api_day(day: str, response: Response, fresh: bool = False) -> list[dict]:
     # known: with no definitions loaded the honest answer is "no idea", and a
     # missing header leaves the page doing what it does today.
     try:
-        if _recurring_defs():
-            missing = _missing_recurrences(day, rows)
+        active = [d for d in defs if d.get("active")]
+        if active:
+            missing = _missing_recurrences(day, rows, active)
             response.headers["X-Day-Complete"] = "0" if missing else "1"
     except Exception as exc:  # noqa: BLE001
         # Never fail a day read over an optimisation. No header, no skip.
         log.warning("completeness check failed for %s (%s)", day, exc)
 
     return rows
+
+
+class TaskOrderBody(BaseModel):
+    titles: list[str]
+
+
+@app.post("/api/task_order")
+def api_task_order(body: TaskOrderBody) -> dict:
+    """Save the order the Today page lists tasks in, measurements included.
+
+    The page sends the titles in the order it shows them. Titles that are not
+    active definitions are ignored -- an old day can show tasks that no longer
+    run -- and any active one the page did not send keeps its relative place
+    after the ones it did, so a partial list can never drop a task.
+
+    This writes recurring_tasks.sort_order, the definitions' display order. It
+    touches no history, so the write floor does not apply. Only rows whose
+    position actually changed are written.
+    """
+    if len(set(body.titles)) != len(body.titles):
+        raise HTTPException(400, "a task is listed twice")
+    active = [d for d in _definitions(fresh=True) if d.get("active")]
+    by_title = {d["title"]: d for d in active}
+    if len(by_title) != len(active):
+        # recurring_tasks is unique on (list_title, title), not title alone.
+        raise HTTPException(409, "two active tasks share a title; order by title is ambiguous")
+    listed = [title for title in body.titles if title in by_title]
+    if not listed:
+        raise HTTPException(400, "none of these titles is an active task")
+    order = listed + [d["title"] for d in active if d["title"] not in set(listed)]
+
+    client = _sb()
+    changed = 0
+    for position, title in enumerate(order, 1):
+        d = by_title[title]
+        if d.get("sort_order") != position:
+            client.table("recurring_tasks").update({"sort_order": position}).eq(
+                "id", d["id"]).execute()
+            changed += 1
+    _cache.pop("definitions", None)
+    return {"order": order, "changed": changed}
 
 
 @app.post("/api/task/{task_id}/toggle")
