@@ -90,6 +90,13 @@ create table if not exists public.recurring_tasks (
     sort_order integer not null default 0,
     starts_on  date,          -- null = no start bound
     ends_on    date,          -- null = ongoing
+    -- Shown blue; an unticked optional task is never a miss.
+    optional   boolean not null default false,
+    -- Minutes after midnight of the task's day; 1440+ reaches into the next
+    -- day (1530 = 1:30am the following night). Null = no deadline.
+    deadline_minutes integer
+        constraint recurring_tasks_deadline_range
+        check (deadline_minutes is null or deadline_minutes between 0 and 2879),
     created_at timestamptz default now(),
     unique (list_title, title)
 );

@@ -150,6 +150,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .heatgrid i.d { aspect-ratio: 1; border-radius: 2px; background: var(--empty); display: block; }
 .heatgrid i.d.done { background: var(--done); }
 .heatgrid i.d.miss { background: var(--miss); }
+.heatgrid i.d.skip { background: color-mix(in srgb, var(--ink-muted) 25%, transparent); }
 .heatgrid i.d.future { background: transparent; box-shadow: inset 0 0 0 1px var(--rule); }
 .heatgrid i.d.blank { background: transparent; }
 
@@ -274,7 +275,8 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   }
 
   function summary() {
-    var past = ROWS.filter(function (r) { return r.day <= TODAY; });
+    /* An unticked optional task is not owed, so it is left out of the rate. */
+    var past = ROWS.filter(function (r) { return r.day <= TODAY && (r.is_completed || !r.optional); });
     var done = past.filter(function (r) { return r.is_completed; });
     var perDay = {};
     done.forEach(function (r) { perDay[r.day] = (perDay[r.day] || 0) + 1; });
@@ -455,9 +457,11 @@ button:focus-visible, select:focus-visible, input:focus-visible {
           continue;
         }
         var r = byDay[key];
-        var cls = !r ? '' : (key > TODAY ? 'future' : (r.is_completed ? 'done' : 'miss'));
+        var skipped = r && !r.is_completed && r.optional;
+        var cls = !r ? '' : (key > TODAY ? 'future' : (r.is_completed ? 'done' : (skipped ? 'skip' : 'miss')));
         var label = r
-          ? key + (key > TODAY ? ' — upcoming' : (r.is_completed ? ' — completed' : ' — missed'))
+          ? key + (key > TODAY ? ' — upcoming' : (r.is_completed ? ' — completed'
+                                                  : (skipped ? ' — skipped (optional)' : ' — missed')))
           : key + ' — not scheduled';
         out.push('<i class="d ' + cls + '" style="' + pos + '" title="' + esc(label) + '"></i>');
       }

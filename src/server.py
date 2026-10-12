@@ -389,6 +389,7 @@ NAV_ITEMS = (
     ("/consistency", "Consistency"),
     ("/data", "Data"),
     ("/pool", "Pool"),
+    ("/tasks", "Settings"),
     ("/docs", "API"),
 )
 
@@ -735,8 +736,14 @@ def api_wake() -> list[dict]:
 
 @app.get("/api/consistency")
 def api_consistency() -> list[dict]:
-    """The four fields used by consistency analysis, without notes or metrics."""
-    return _task_projection("day,list_title,title,is_completed")
+    """The fields used by consistency analysis, without notes or metrics.
+
+    `optional` comes from the task's current definition: an unticked optional
+    task is not a miss.
+    """
+    optional = {d["title"] for d in _definitions() if d.get("optional")}
+    return [{**r, "optional": r["title"] in optional}
+            for r in _task_projection("day,list_title,title,is_completed")]
 
 
 @app.post("/api/refresh")
@@ -926,12 +933,13 @@ def _definitions_order_key(d: dict, measurements: set[str]) -> tuple:
     """Where a definition sits on the Today page.
 
     An explicit sort_order -- set by dragging -- wins. Until one is set the
-    definitions share sort_order 0 and fall back to the default: measurements
-    above tasks, each group in the order the definitions were created.
+    definitions share sort_order 0 and fall back to the default: measurements,
+    then required tasks, then optional ones, each group in the order the
+    definitions were created.
     """
     return (
         d.get("sort_order") or 0,
-        0 if d["title"] in measurements else 1,
+        0 if d["title"] in measurements else (2 if d.get("optional") else 1),
         d.get("created_at") or "",
         d.get("id") or 0,
     )
@@ -968,6 +976,47 @@ def _definitions(fresh: bool = False) -> list[dict]:
     return _cached("definitions", build)
 
 
+def _app_tz():
+    """The timezone days are bucketed in -- the one /today uses for 'today'."""
+    from zoneinfo import ZoneInfo
+
+    from .timezones import resolve_timezone
+
+    return ZoneInfo(resolve_timezone(load_config(), allow_google=False))
+
+
+def _deadline_at(day: str, minutes: int | None, tz) -> str | None:
+    """The instant a deadline falls, as UTC ISO; minutes past 1440 reach into the next day.
+
+    Built from a local wall-clock time rather than by adding minutes to
+    midnight, so a deadline on a daylight-saving changeover lands on the clock
+    time it says.
+    """
+    if minutes is None:
+        return None
+    local = (datetime.combine(date.fromisoformat(day), datetime.min.time())
+             + timedelta(minutes=int(minutes)))
+    return local.replace(tzinfo=tz).astimezone(timezone.utc).isoformat()
+
+
+def _annotate(rows: list[dict], defs: list[dict], day: str) -> list[dict]:
+    """Copy each row with its definition's optional flag and deadline instant.
+
+    Copies: the non-fresh path hands in rows from the shared history cache.
+    """
+    by_title = {d["title"]: d for d in defs}
+    tz = _app_tz()
+    out = []
+    for r in rows:
+        d = by_title.get(r["title"]) or {}
+        out.append({
+            **r,
+            "optional": bool(d.get("optional")),
+            "deadline_at": _deadline_at(day, d.get("deadline_minutes"), tz),
+        })
+    return out
+
+
 def _recurring_defs() -> list[dict]:
     """Active recurrence definitions -- what is due -- in page order."""
     return [d for d in _definitions() if d.get("active")]
@@ -993,6 +1042,7 @@ def api_day(day: str, response: Response, fresh: bool = False) -> list[dict]:
     else:
         rows = [r for r in _task_history() if r["day"] == day]
     rows.sort(key=lambda r: (position.get(r["title"], len(position)), r["title"]))
+    rows = _annotate(rows, defs, day)
 
     # Whether this day still needs materialising, so the page can skip the
     # ensure POST when it does not -- which is almost always. Free: the
@@ -1053,6 +1103,102 @@ def api_task_order(body: TaskOrderBody) -> dict:
             changed += 1
     _cache.pop("definitions", None)
     return {"order": order, "changed": changed}
+
+
+class DefinitionSettings(BaseModel):
+    optional: bool | None = None
+    deadline_minutes: int | None = None
+
+
+def _freeze_order(active: list[dict]) -> None:
+    """Pin every active definition to its current position.
+
+    The default order puts optional tasks last, so flipping one to optional
+    would move it -- unless the order is already explicit. Writing the current
+    positions first means the flip changes the colour and nothing else.
+    """
+    client = _sb()
+    for position, d in enumerate(active, 1):
+        if d.get("sort_order") != position:
+            client.table("recurring_tasks").update({"sort_order": position}).eq(
+                "id", d["id"]).execute()
+
+
+@app.post("/api/definitions/{def_id}")
+def api_definition_settings(def_id: int, body: DefinitionSettings) -> dict:
+    """Set whether a task is optional, and its deadline. Definitions only, no history.
+
+    deadline_minutes counts from midnight of the task's day; 1440-2879 is the
+    following day. Send it as null to clear the deadline; leave it out to keep it.
+    """
+    sent = body.model_fields_set
+    if not sent:
+        raise HTTPException(400, "nothing to change")
+    if "optional" in sent and body.optional is None:
+        raise HTTPException(400, "optional must be true or false")
+    if body.deadline_minutes is not None and not 0 <= body.deadline_minutes <= 2879:
+        raise HTTPException(400, "deadline must be between 00:00 and 23:59 the next day")
+
+    defs = _definitions(fresh=True)
+    target = next((d for d in defs if d["id"] == def_id), None)
+    if target is None:
+        raise HTTPException(404, f"no task definition {def_id}")
+    if "optional" not in target or "deadline_minutes" not in target:
+        raise HTTPException(
+            409, "run sql/migrations/2026-10-12_optional_and_deadline.sql first")
+
+    if "optional" in sent and bool(target.get("optional")) != body.optional:
+        active = [d for d in defs if d.get("active")]
+        if any(not d.get("sort_order") for d in active):
+            _freeze_order(active)
+
+    changes = {k: getattr(body, k) for k in sent}
+    updated = (_sb().table("recurring_tasks").update(changes)
+               .eq("id", def_id).execute().data or [])
+    _cache.pop("definitions", None)
+    if not updated:
+        raise HTTPException(404, f"no task definition {def_id}")
+    row = updated[0]
+    return {k: row.get(k) for k in ("id", "title", "optional", "deadline_minutes")}
+
+
+@app.post("/api/task/{task_id}/completed_at")
+def api_set_completed_at(task_id: int, at: str) -> dict:
+    """Correct when a completion actually happened.
+
+    The recorded time is when the box was ticked, which can be well after the
+    fact. Deadlines judge by this time, so it can be set to when the task was
+    really done. Only for completed rows, never earlier than the start of the
+    task's day, never in the future, and never below the write floor.
+    """
+    try:
+        when = datetime.fromisoformat(at.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(400, f"not a timestamp: {at!r}")
+    if when.tzinfo is None:
+        raise HTTPException(400, "timestamp needs a UTC offset")
+
+    client = _sb()
+    found = (client.table("task_history").select("day,is_completed")
+             .eq("id", task_id).execute().data)
+    if not found:
+        raise HTTPException(404, f"no task_history row with id {task_id}")
+    day = str(found[0]["day"])[:10]
+    _check_writable(day)
+    if not found[0].get("is_completed"):
+        raise HTTPException(400, "only a completed task has a completion time")
+
+    start = datetime.combine(date.fromisoformat(day), datetime.min.time()).replace(tzinfo=_app_tz())
+    if when < start:
+        raise HTTPException(400, "a task cannot be completed before its day began")
+    if when > datetime.now(timezone.utc) + timedelta(minutes=5):
+        raise HTTPException(400, "that time is in the future")
+
+    res = (client.table("task_history")
+           .update({"completed_at": when.astimezone(timezone.utc).isoformat()})
+           .eq("id", task_id).execute())
+    _cache_apply(res.data or [])
+    return res.data[0] if res.data else {"id": task_id}
 
 
 @app.post("/api/task/{task_id}/toggle")
@@ -1194,7 +1340,22 @@ def page_today(day: str | None = None) -> str:
 def page_calendar() -> str:
     return _render("calendar_view.html", {
         "mode": "live", "endpoint": "/api/task_history", "paged": False,
+        "optional": sorted(d["title"] for d in _definitions() if d.get("optional")),
     }, active="/calendar")
+
+
+@app.get("/tasks", response_class=HTMLResponse)
+def page_tasks() -> str:
+    """Per-task settings: optional or required, and a deadline."""
+    defs = [d for d in _definitions(fresh=True) if d.get("active")]
+    migrated = all("optional" in d and "deadline_minutes" in d for d in defs)
+    return _render("tasks.html", {
+        "mode": "inline",
+        "migrated": migrated,
+        "defs": [{"id": d["id"], "title": d["title"],
+                  "optional": bool(d.get("optional")),
+                  "deadline_minutes": d.get("deadline_minutes")} for d in defs],
+    }, active="/tasks")
 
 
 # Both series render through scripts/templates/series_chart.html. They differ

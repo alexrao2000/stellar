@@ -5,6 +5,7 @@
   --ink: #191627; --ink-muted: #6A6480; --rule: #DCD8E6;
   --done-bg: #EDEAF4; --done-ink: #8B84A6;
   --todo-bg: #6D4AC4; --todo-ink: #FFFFFF;
+  --opt-bg: #2563C9; --opt-ink: #FFFFFF;
   --ok: #2F6B4F; --warn: #8A5A00; --bad: #A33A28;
   --shadow: 0 1px 2px rgba(25,22,39,.06), 0 2px 8px rgba(25,22,39,.04);
 }
@@ -14,6 +15,7 @@
     --ink: #EBE8F5; --ink-muted: #948DAD; --rule: #2E2A3D;
     --done-bg: #221E30; --done-ink: #7B7496;
     --todo-bg: #8B63E8; --todo-ink: #120E1C;
+    --opt-bg: #5B9BF0; --opt-ink: #0B1424;
     --ok: #6FBF95; --warn: #E8B85C; --bad: #E3806B;
     --shadow: 0 1px 2px rgba(0,0,0,.5), 0 2px 10px rgba(0,0,0,.3);
   }
@@ -23,6 +25,7 @@
   --ink: #EBE8F5; --ink-muted: #948DAD; --rule: #2E2A3D;
   --done-bg: #221E30; --done-ink: #7B7496;
   --todo-bg: #8B63E8; --todo-ink: #120E1C;
+  --opt-bg: #5B9BF0; --opt-ink: #0B1424;
   --ok: #6FBF95; --warn: #E8B85C; --bad: #E3806B;
   --shadow: 0 1px 2px rgba(0,0,0,.5), 0 2px 10px rgba(0,0,0,.3);
 }
@@ -31,6 +34,7 @@
   --ink: #191627; --ink-muted: #6A6480; --rule: #DCD8E6;
   --done-bg: #EDEAF4; --done-ink: #8B84A6;
   --todo-bg: #6D4AC4; --todo-ink: #FFFFFF;
+  --opt-bg: #2563C9; --opt-ink: #FFFFFF;
   --ok: #2F6B4F; --warn: #8A5A00; --bad: #A33A28;
   --shadow: 0 1px 2px rgba(25,22,39,.06), 0 2px 8px rgba(25,22,39,.04);
 }
@@ -118,7 +122,48 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
 /* Every entry -- measurement or task -- is a tile with a drag handle beside
    it. The handle sits outside the tile so tapping a tile still ticks it and a
    field can still be typed in; only the handle moves things. */
-.item { display: flex; gap: 6px; align-items: stretch; }
+.item { display: flex; gap: 6px; align-items: stretch; position: relative; }
+
+/* Optional tasks are blue rather than purple; done, they fade like any other,
+   keeping a blue tick so they still read as optional. */
+.task.optional:not(.done), .field.todo.optional { background: var(--opt-bg); color: var(--opt-ink); }
+.field.todo.optional label { color: var(--opt-ink); }
+.task.optional.done .box, .field.optional.done .box {
+  background: color-mix(in srgb, var(--opt-bg) 60%, var(--done-ink));
+  border-color: color-mix(in srgb, var(--opt-bg) 60%, var(--done-ink));
+}
+
+/* The deadline: quiet while it is still ahead, a red tag once it is missed. */
+.due {
+  margin-left: auto; flex: 0 0 auto; white-space: nowrap;
+  font-family: ui-monospace, Menlo, monospace; font-size: .72rem; font-weight: 400;
+  opacity: .8; text-decoration: none;
+}
+.due:empty { display: none; }
+.due.missed {
+  opacity: 1; background: var(--bad); color: #fff;
+  padding: 2px 6px; border-radius: 4px;
+}
+
+/* When a done task was completed, on hover. Clicking it corrects the time. */
+.when {
+  position: absolute; z-index: 3; top: -11px; right: 42px;
+  display: none; align-items: center; gap: 6px;
+  padding: 3px 8px; border-radius: 6px; border: 1px solid var(--rule);
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow);
+  font-family: ui-monospace, Menlo, monospace; font-size: .72rem;
+}
+.item.has-when:hover .when, .item.has-when:focus-within .when, .when.editing { display: flex; }
+.when button {
+  border: none; background: transparent; color: inherit; font: inherit;
+  padding: 0; cursor: pointer;
+}
+.when button.act { color: var(--todo-bg); font-weight: 600; }
+.when .pen { opacity: .6; margin-left: 4px; }
+.when input {
+  font: inherit; padding: 2px 4px; border: 1px solid var(--rule); border-radius: 4px;
+  background: var(--bg); color: var(--ink);
+}
 .item > .task, .item > .field { flex: 1; min-width: 0; }
 .grip {
   flex: 0 0 30px; display: flex; align-items: center; justify-content: center;
@@ -245,6 +290,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
             <input id="weight" type="number" inputmode="decimal" step="0.1" placeholder="0.0">
             <span class="unit" aria-hidden="true">lbs</span>
           </div>
+          <span class="due" id="due-weight"></span>
         </div>
       </div>
       <div class="item" id="item-wake">
@@ -252,6 +298,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
           <span class="box" aria-hidden="true"></span>
           <label for="wake">Wake up</label>
           <input id="wake" type="time">
+          <span class="due" id="due-wake"></span>
         </div>
       </div>
     </div>
@@ -597,6 +644,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
        app eating your input. */
     ['weight', 'wake'].forEach(function (id) {
       setTile(id, '');
+      document.getElementById('item-' + id)._row = null;
       var el = document.getElementById(id);
       if (document.activeElement === el) return;
       el.value = '';
@@ -608,6 +656,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
          tile -- a second tile in Tasks would only repeat it. Prefill from what
          is recorded, so a re-save shows the current value, not an empty box. */
       if (r.title === WEIGH) {
+        document.getElementById('item-weight')._row = r;
         entries.push({ title: r.title, node: document.getElementById('item-weight'), seq: entries.length });
         seen.weight = true;
         setTile('weight', r.is_completed ? 'done' : 'todo');
@@ -621,6 +670,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
         return;
       }
       if (r.title === WAKE) {
+        document.getElementById('item-wake')._row = r;
         entries.push({ title: r.title, node: document.getElementById('item-wake'), seq: entries.length });
         seen.wake = true;
         setTile('wake', r.is_completed ? 'done' : 'todo');
@@ -636,7 +686,8 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       var b = document.createElement('button');
       b.type = 'button';
       b.className = 'task' + (r.is_completed ? ' done' : '');
-      b.innerHTML = '<span class="box"></span><span class="ttl">' + esc(r.title) + '</span>';
+      b.innerHTML = '<span class="box"></span><span class="ttl">' + esc(r.title) +
+        '</span><span class="due"></span>';
       if (!BOOT.writable) {
         b.disabled = true;
         b.style.cursor = 'default';
@@ -652,6 +703,8 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
         post('/api/task/' + r.id + '/toggle?done=' + sent)
           .then(function (updated) {
             if (updated && updated.weight_lbs !== undefined) r.weight_lbs = updated.weight_lbs;
+            if (updated && 'completed_at' in updated) r.completed_at = updated.completed_at;
+            decorate(item);
           })
           .catch(function (e) {
             /* If the user clicked again, preserve that newer desired state and
@@ -660,6 +713,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
             if (r.is_completed === sent) {
               r.is_completed = !sent;
               setDone(b, !sent);
+              decorate(item);
               say(e.message, true);
             }
           })
@@ -678,11 +732,14 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
         if (!BOOT.writable) return;
         var next = !r.is_completed;
         r.is_completed = next;
+        r.completed_at = next ? new Date().toISOString() : null;
         setDone(b, next);
+        decorate(item);
         if (!b.dataset.syncing) syncDesired();
       });
       var item = document.createElement('div');
       item.className = 'item task-item';
+      item._row = r;
       item.dataset.title = r.title;
       item.appendChild(b);
       item.appendChild(makeGrip(r.title));
@@ -702,7 +759,119 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       return ra !== rb ? (ra < rb ? -1 : 1) : a.seq - b.seq;
     });
     arrange(host, entries.map(function (e) { return e.node; }));
+    entries.forEach(function (e) { decorate(e.node); });
   }
+
+  /* ---- optional, deadline, completion time ------------------------------ */
+  function hm(d) { return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+  function localDay(d) { return d.toLocaleDateString('en-CA'); }   // YYYY-MM-DD
+  /* The value an <input type=datetime-local> wants, in this browser's time. */
+  function localInput(d) {
+    var z = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()) +
+      'T' + z(d.getHours()) + ':' + z(d.getMinutes());
+  }
+
+  /* Missed: ticked after the deadline, or still unticked once it has passed.
+     An unticked optional task is allowed to go undone, so only a late tick
+     counts against it. */
+  function deadlineState(r) {
+    if (!r || !r.deadline_at) return null;
+    var due = new Date(r.deadline_at);
+    var late = r.is_completed
+      ? (r.completed_at && new Date(r.completed_at) > due)
+      : (!r.optional && Date.now() > due);
+    return { due: due, missed: !!late };
+  }
+
+  function decorate(item) {
+    var r = item._row;
+    var tile = item.querySelector('.task, .field');
+    tile.classList.toggle('optional', !!(r && r.optional));
+
+    var tag = item.querySelector('.due');
+    var st = deadlineState(r);
+    if (!st) {
+      tag.textContent = '';
+      tag.className = 'due';
+    } else {
+      var when = hm(st.due) + (localDay(st.due) > r.day ? ' next day' : '');
+      tag.className = 'due' + (st.missed ? ' missed' : '');
+      tag.textContent = st.missed ? 'missed ' + when : 'by ' + when;
+      tag.title = st.missed ? 'Deadline was ' + when : 'Deadline ' + when;
+    }
+
+    var pill = item.querySelector('.when');
+    var show = !!(r && r.is_completed && r.completed_at);
+    item.classList.toggle('has-when', show);
+    if (!show) { if (pill) pill.remove(); return; }
+    if (pill && pill.classList.contains('editing')) return;
+    if (!pill) {
+      pill = document.createElement('div');
+      pill.className = 'when';
+      item.appendChild(pill);
+    }
+    var at = new Date(r.completed_at);
+    var label = (localDay(at) === r.day ? '' :
+      at.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) + ' ') + hm(at);
+    pill.innerHTML = '';
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.innerHTML = 'Completed ' + esc(label) +
+      (BOOT.writable && writable(r.day) ? '<span class="pen" aria-hidden="true">&#9998;</span>' : '');
+    b.title = BOOT.writable && writable(r.day) ? 'Correct when this was done' : '';
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (writable(r.day)) editWhen(item, pill);
+    });
+    pill.appendChild(b);
+  }
+
+  function editWhen(item, pill) {
+    var r = item._row;
+    pill.classList.add('editing');
+    pill.innerHTML = '';
+    var input = document.createElement('input');
+    input.type = 'datetime-local';
+    input.value = localInput(new Date(r.completed_at));
+    input.min = r.day + 'T00:00';
+    input.max = localInput(new Date());
+    var save = document.createElement('button');
+    save.type = 'button'; save.className = 'act'; save.textContent = 'Save';
+    var cancel = document.createElement('button');
+    cancel.type = 'button'; cancel.textContent = 'Cancel';
+    [input, save, cancel].forEach(function (el) {
+      el.addEventListener('click', function (e) { e.stopPropagation(); });
+      pill.appendChild(el);
+    });
+    function close() { pill.classList.remove('editing'); decorate(item); }
+    cancel.addEventListener('click', close);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') close();
+      if (e.key === 'Enter') save.click();
+    });
+    save.addEventListener('click', function () {
+      if (!input.value) return;
+      var iso = new Date(input.value).toISOString();
+      save.disabled = true;
+      post('/api/task/' + r.id + '/completed_at?at=' + encodeURIComponent(iso))
+        .then(function (updated) {
+          r.completed_at = (updated && updated.completed_at) || iso;
+          storeWrite(DAY, CACHE[DAY] || []);
+          say(r.title + ' completed at ' + hm(new Date(r.completed_at)));
+          close();
+        })
+        .catch(function (e) { save.disabled = false; say(e.message, true); });
+    });
+    input.focus();
+  }
+
+  /* A deadline can pass while the page sits open; re-check once a minute. */
+  setInterval(function () {
+    Array.prototype.forEach.call(document.querySelectorAll('#tasks > .item'), function (n) {
+      if (n._row) decorate(n);
+    });
+  }, 60000);
 
   /* Put `nodes` in order without ever moving the one holding focus. Moving a
      focused node blurs it, and a blurred measurement field saves whatever is
