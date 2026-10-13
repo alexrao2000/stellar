@@ -1,4 +1,4 @@
-<title>Today</title>
+<title>Tasks</title>
 <style>
 :root {
   --bg: #EFEEF4; --surface: #FCFBFE; --surface-2: #F4F2F9;
@@ -51,6 +51,82 @@ html, body {
 }
 /* Phone-first: this is used standing in a bathroom, not at a desk. */
 .wrap { max-width: 560px; margin: 0 auto; padding: 24px 16px 64px; }
+/* A range needs the width; one day reads best narrow. */
+body.ranged .wrap { max-width: 1500px; }
+/* The board takes the width; the controls above it keep the one-day width. */
+body.ranged header > :not(.eyebrow):not(h1) { max-width: 560px; }
+body.ranged #day-card { display: none; }
+body:not(.ranged) #board { display: none; }
+
+.views {
+  display: inline-flex; gap: 2px; padding: 3px; margin-top: 12px;
+  background: var(--surface-2); border: 1px solid var(--rule); border-radius: 10px;
+}
+.views button {
+  border: none; background: transparent; color: var(--ink-muted); font: inherit;
+  font-size: .82rem; font-weight: 600; padding: 7px 12px; border-radius: 7px; cursor: pointer;
+}
+.views button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.custom { display: none; align-items: center; gap: 8px; margin-top: 8px; font-size: .84rem; }
+body.view-custom .custom { display: flex; }
+body.view-custom .daynav2 { display: none; }
+.custom input[type="date"] {
+  font: inherit; font-size: .86rem; padding: 7px 9px; border-radius: 9px;
+  border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+/* ---- range: one column per day, or a month grid ---------------------------- */
+#board { margin-top: 4px; }
+.summary { font-size: .8rem; color: var(--ink-muted); margin: 0 0 10px; font-family: ui-monospace, Menlo, monospace; }
+.cols { display: grid; gap: 10px; overflow-x: auto; padding-bottom: 6px; align-items: start; }
+.month { display: grid; grid-template-columns: repeat(7, minmax(150px, 1fr)); gap: 8px; overflow-x: auto; align-items: start; }
+.month .wd { font-size: .68rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-muted); padding: 0 4px; }
+.col {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
+  box-shadow: var(--shadow); overflow: hidden; min-width: 0;
+}
+.col.is-today { border-color: var(--todo-bg); box-shadow: 0 0 0 1px var(--todo-bg), var(--shadow); }
+.col.blank { visibility: hidden; }
+.col-head {
+  display: flex; align-items: baseline; gap: 6px; width: 100%; text-align: left;
+  border: none; border-bottom: 1px solid var(--rule); background: var(--surface-2);
+  color: var(--ink); font: inherit; padding: 8px 10px; cursor: pointer;
+}
+.col-head:hover { background: var(--bg); }
+.col-head .dn { font-size: 1.1rem; font-weight: 700; }
+.col-head .dw { font-size: .7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+.col-head .cnt { margin-left: auto; font-family: ui-monospace, Menlo, monospace; font-size: .72rem; color: var(--ink-muted); }
+.col-body { padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.col.future .col-body { opacity: .78; }
+.mini {
+  display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0;
+  border: none; border-radius: 6px; padding: 7px 8px; text-align: left;
+  font: inherit; font-size: .8rem; font-weight: 600; line-height: 1.25; cursor: pointer;
+  background: var(--todo-bg); color: var(--todo-ink);
+}
+.mini.optional { background: var(--opt-bg); color: var(--opt-ink); }
+.mini.done { background: var(--done-bg); color: var(--done-ink); font-weight: 400; }
+.mini.done .t { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--done-ink) 55%, transparent); }
+.mini:disabled { cursor: default; }
+.mini .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.mini .tag { flex: 0 0 auto; font-family: ui-monospace, Menlo, monospace; font-size: .64rem; font-weight: 400; opacity: .85; }
+.mini .tag.missed { background: var(--bad); color: #fff; padding: 1px 4px; border-radius: 3px; opacity: 1; }
+.mini .mbox {
+  width: 13px; height: 13px; border-radius: 3px; flex: 0 0 auto; border: 1.5px solid currentColor;
+}
+.mini.done .mbox { background: var(--done-ink); border-color: var(--done-ink); }
+.mini input {
+  flex: 1 1 60px; min-width: 0; width: 60px; font: inherit; font-size: .78rem; font-weight: 400;
+  padding: 3px 5px; border-radius: 5px; border: 1px solid transparent;
+  background: var(--surface); color: var(--ink); font-family: ui-monospace, Menlo, monospace;
+}
+.mini.field { cursor: text; flex-wrap: wrap; row-gap: 5px; }
+.mini.field input { flex: 1 0 100%; width: auto; padding: 4px 6px; font-size: .8rem; }
+.mini.field .lbl { flex: 0 0 auto; font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; }
+.month .mini { padding: 5px 6px; font-size: .74rem; }
+.empty-day { font-size: .76rem; color: var(--ink-muted); padding: 6px 4px; font-style: italic; }
+
 
 header { margin-bottom: 18px; }
 .eyebrow {
@@ -262,7 +338,14 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
 <div class="wrap">
   <header>
     <p class="eyebrow">Task Tracker</p>
-    <h1>Today</h1>
+    <h1>Tasks</h1>
+    <div class="views" id="views" role="group" aria-label="Range">
+      <button type="button" data-view="day">Day</button>
+      <button type="button" data-view="3days">3 days</button>
+      <button type="button" data-view="week">Week</button>
+      <button type="button" data-view="month">Month</button>
+      <button type="button" data-view="custom">Custom</button>
+    </div>
     <div class="daynav">
       <button class="step" id="prev-day" type="button" aria-label="Previous day">&larr;</button>
       <div class="date mono" id="date"></div>
@@ -272,9 +355,14 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       <input type="date" id="pick" aria-label="Jump to a date">
       <button class="step wide" id="go-today" type="button">Today</button>
     </div>
+    <div class="custom">
+      <input type="date" id="range-start" aria-label="First day">
+      <span>to</span>
+      <input type="date" id="range-end" aria-label="Last day">
+    </div>
   </header>
 
-  <div class="card">
+  <div class="card" id="day-card">
     <h2>Tasks</h2>
     <div class="body" id="tasks">
       <div class="item" id="item-weight">
@@ -303,6 +391,8 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       </div>
     </div>
   </div>
+
+  <div id="board"></div>
 
   <div id="status"></div>
 </div>
@@ -370,9 +460,6 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     sub.forEach(function (t) { if (!known[t]) out.push(t); });
     return out;
   }
-  /* Per day: true = every recurring task already has a row, so the ensure POST
-     has nothing to do. Undefined means the server did not say. */
-  var complete = {};
 
   /* Last known rows per day, surviving reload and reboot. This is what makes
      the page paint instantly instead of waiting out a cold start. It is a
@@ -405,7 +492,6 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   }
 
   var requestVersion = {};
-  var ensured = {};
 
   function fetchDay(day, fresh) {
     if (!fresh && CACHE[day]) return Promise.resolve(CACHE[day]);
@@ -418,12 +504,6 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
                          fresh ? { cache: 'no-store' } : {})
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
-        /* The read already knows whether this day still needs materialising.
-           Absent header means the server could not say, and we leave `complete`
-           undefined so the ensure below still runs. */
-        var flag = r.headers.get('X-Day-Complete');
-        if (flag === '1') complete[day] = true;
-        else if (flag === '0') complete[day] = false;
         return r.json();
       })
       .then(function (rows) {
@@ -453,13 +533,13 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     paintHeader(day);
     if (!opts.pop) {
       history[opts.replace ? 'replaceState' : 'pushState'](
-        { day: day }, '', '/today?day=' + day);
+        { view: 'day', day: day }, '', '/?day=' + day);
     }
 
     var ro = !writable(day);
     document.body.classList.toggle('read-only', ro);
     ['weight', 'wake'].forEach(function (id) {
-      document.getElementById(id).disabled = ro;
+      document.getElementById(id).disabled = ro || day > BOOT.today;
     });
     say(ro ? 'Read-only: ' + day + ' is before ' + BOOT.floor +
              ', the reconciled history.' : '');
@@ -480,7 +560,6 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
          throw away focus and any half-typed measurement to show the same
          thing, which is exactly the flicker this is meant to remove. */
       if (JSON.stringify(rows) !== knownJson) render(rows);
-      scheduleEnsure(day);
       prefetchAdjacent(day);
     }).catch(function (e) {
       /* With a local copy on screen this is a stale-data warning, not a
@@ -496,53 +575,55 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     });
   }
 
-  /* Materialising is a write, and switching days is now instant, so it waits
-     for the day to be settled on rather than merely passed through. Without
-     this, holding an arrow key would create rows for every day it swept over
-     -- and pre-created future rows are precisely what the calendar shows as a
-     wall of misses later. */
-  var ensureTimer = null;
-  function scheduleEnsure(day) {
-    clearTimeout(ensureTimer);
-    if (!writable(day) || ensured[day]) return;
-    /* Nothing missing -- and the read that just landed said so, at no cost.
-       Materialising here would be a write round trip that inserts nothing,
-       which is what it had been doing on every day opened. */
-    if (complete[day]) { ensured[day] = true; return; }
-    ensureTimer = setTimeout(function () {
-      if (DAY !== day) return;
-      post('/api/day/' + day + '/ensure')
-        .then(function (result) {
-          ensured[day] = true;
-          if (!result.created || !result.created.length) return null;
-          delete CACHE[day];                     // newly materialised rows
-          return fetchDay(day, true);
-        })
-        .then(function (rows) { if (rows && DAY === day) render(rows); })
-        .catch(function (e) { say(e.message, true); });
-    }, 400);
+  /* ---- views ---------------------------------------------------------------
+     One day, or a range of days. Arrows, the date picker, Today and the arrow
+     keys all move within whichever is showing. */
+  var VIEW = BOOT.view || 'day';
+  var CUSTOM = { start: BOOT.start || shiftDay(BOOT.day, -6), end: BOOT.end || BOOT.day };
+
+  function step(dir) {
+    if (VIEW === 'day') return showDay(shiftDay(DAY, dir));
+    if (VIEW === 'month') return go('month', addMonths(DAY, dir));
+    if (VIEW === 'custom') {
+      var span = daysBetween(CUSTOM.start, CUSTOM.end) + 1;
+      CUSTOM = { start: shiftDay(CUSTOM.start, dir * span), end: shiftDay(CUSTOM.end, dir * span) };
+      return go('custom', CUSTOM.end);
+    }
+    return go(VIEW, shiftDay(DAY, dir * (VIEW === 'week' ? 7 : 3)));
   }
 
-  document.getElementById('prev-day').addEventListener('click', function () {
-    showDay(shiftDay(DAY, -1));
-  });
-  document.getElementById('next-day').addEventListener('click', function () {
-    showDay(shiftDay(DAY, 1));
-  });
+  document.getElementById('prev-day').addEventListener('click', function () { step(-1); });
+  document.getElementById('next-day').addEventListener('click', function () { step(1); });
   document.getElementById('pick').addEventListener('change', function (e) {
-    if (e.target.value) showDay(e.target.value);
+    if (e.target.value) go(VIEW, e.target.value);
   });
   document.getElementById('go-today').addEventListener('click', function () {
-    showDay(BOOT.today);
+    go(VIEW, BOOT.today);
+  });
+  ['range-start', 'range-end'].forEach(function (id) {
+    document.getElementById(id).addEventListener('change', function () {
+      var s = document.getElementById('range-start').value;
+      var e = document.getElementById('range-end').value;
+      if (!s || !e) return;
+      if (e < s) { var x = s; s = e; e = x; }
+      if (daysBetween(s, e) >= BOOT.rangeMax) e = shiftDay(s, BOOT.rangeMax - 1);
+      CUSTOM = { start: s, end: e };
+      go('custom', e);
+    });
+  });
+  document.getElementById('views').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-view]');
+    if (b) go(b.dataset.view, DAY);
   });
   document.addEventListener('keydown', function (e) {
     if (e.target.tagName === 'INPUT') return;
-    if (e.key === 'ArrowLeft') showDay(shiftDay(DAY, -1));
-    if (e.key === 'ArrowRight') showDay(shiftDay(DAY, 1));
+    if (e.key === 'ArrowLeft') step(-1);
+    if (e.key === 'ArrowRight') step(1);
   });
   window.addEventListener('popstate', function (e) {
-    var day = (e.state && e.state.day) || BOOT.day;
-    showDay(day, { pop: true });
+    var s = e.state || {};
+    if (s.start) CUSTOM = { start: s.start, end: s.end };
+    go(s.view || 'day', s.day || BOOT.day, { pop: true });
   });
 
   function esc(s) {
@@ -688,7 +769,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       b.className = 'task' + (r.is_completed ? ' done' : '');
       b.innerHTML = '<span class="box"></span><span class="ttl">' + esc(r.title) +
         '</span><span class="due"></span>';
-      if (!BOOT.writable) {
+      if (!writable(r.day) || r.day > BOOT.today) {
         b.disabled = true;
         b.style.cursor = 'default';
         b.style.opacity = '1';
@@ -700,10 +781,14 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       function syncDesired() {
         var sent = r.is_completed;
         b.dataset.syncing = '1';
-        post('/api/task/' + r.id + '/toggle?done=' + sent)
+        /* A scheduled task has no row, and so no id, until something is
+           recorded: address it by day and title, and the server makes it. */
+        post(r.id ? '/api/task/' + r.id + '/toggle?done=' + sent
+                  : '/api/day/' + r.day + '/check?title=' + encodeURIComponent(r.title) + '&done=' + sent)
           .then(function (updated) {
             if (updated && updated.weight_lbs !== undefined) r.weight_lbs = updated.weight_lbs;
             if (updated && 'completed_at' in updated) r.completed_at = updated.completed_at;
+            if (updated && updated.id) { r.id = updated.id; delete r.virtual; }
             decorate(item);
           })
           .catch(function (e) {
@@ -729,7 +814,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       }
 
       b.addEventListener('click', function () {
-        if (!BOOT.writable) return;
+        if (b.disabled) return;
         var next = !r.is_completed;
         r.is_completed = next;
         r.completed_at = next ? new Date().toISOString() : null;
@@ -1057,6 +1142,11 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
 
   function revalidate() {
     if (document.hidden || writesInFlight) return;
+    if (VIEW !== 'day') {
+      var r = rangeOf(VIEW, DAY);
+      loadRange(r[0], r[1], true);
+      return;
+    }
     var day = DAY;
     var before = CACHE[day] ? JSON.stringify(CACHE[day]) : null;
     fetchDay(day, true).then(function (rows) {
@@ -1077,6 +1167,240 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   /* showDay handles read-only, materialising and the window; the first call
      just points it at the day the server rendered. replace rather than push so
      the entry the browser already has is not duplicated. */
-  showDay(DAY, { replace: true });
+
+  /* ---- ranges ------------------------------------------------------------ */
+  function daysBetween(a, b) {
+    var p = parts(a), q = parts(b);
+    return Math.round((Date.UTC(q[0], q[1] - 1, q[2]) - Date.UTC(p[0], p[1] - 1, p[2])) / 86400000);
+  }
+  function weekday(day) { var q = parts(day); return new Date(Date.UTC(q[0], q[1] - 1, q[2])).getUTCDay(); }
+  function addMonths(day, n) {
+    var q = parts(day), x = new Date(Date.UTC(q[0], q[1] - 1 + n, 1));
+    return x.getUTCFullYear() + '-' + String(x.getUTCMonth() + 1).padStart(2, '0') + '-01';
+  }
+  /* [first, last] day a view shows around `day`. Weeks start on Monday. */
+  function rangeOf(view, day) {
+    if (view === '3days') return [shiftDay(day, -1), shiftDay(day, 1)];
+    if (view === 'week') { var s = shiftDay(day, -((weekday(day) + 6) % 7)); return [s, shiftDay(s, 6)]; }
+    if (view === 'month') {
+      var first = day.slice(0, 8) + '01';
+      return [first, shiftDay(addMonths(first, 1), -1)];
+    }
+    if (view === 'custom') return [CUSTOM.start, CUSTOM.end];
+    return [day, day];
+  }
+  function label(day, opts) {
+    var q = parts(day);
+    return new Date(Date.UTC(q[0], q[1] - 1, q[2])).toLocaleDateString([],
+      Object.assign({ timeZone: 'UTC' }, opts));
+  }
+
+  function urlFor(view, day) {
+    if (view === 'day') return '/?day=' + day;
+    if (view === 'custom') return '/?view=custom&start=' + CUSTOM.start + '&end=' + CUSTOM.end;
+    return '/?view=' + view + '&day=' + day;
+  }
+
+  function go(view, day, opts) {
+    opts = opts || {};
+    VIEW = view;
+    document.body.classList.toggle('ranged', view !== 'day');
+    ['day', '3days', 'week', 'month', 'custom'].forEach(function (v) {
+      document.body.classList.toggle('view-' + v, v === view);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('#views button'), function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.view === view));
+    });
+    if (view === 'day') return showDay(day, opts);
+
+    DAY = day;
+    var r = rangeOf(view, day);
+    document.getElementById('date').textContent = view === 'month'
+      ? label(r[0], { month: 'long', year: 'numeric' })
+      : label(r[0], { month: 'short', day: 'numeric' }) + ' – ' +
+        label(r[1], { month: 'short', day: 'numeric', year: 'numeric' });
+    document.getElementById('pick').value = day;
+    document.getElementById('range-start').value = CUSTOM.start;
+    document.getElementById('range-end').value = CUSTOM.end;
+    if (!opts.pop) {
+      history[opts.replace ? 'replaceState' : 'pushState'](
+        { view: view, day: day, start: CUSTOM.start, end: CUSTOM.end }, '', urlFor(view, day));
+    }
+    say('');
+    return loadRange(r[0], r[1]);
+  }
+
+  var RANGE = null, rangeSeq = 0;
+
+  /* `background` is the periodic re-read: it must never redraw under someone
+     typing. A range you asked for always draws. */
+  function loadRange(start, end, background) {
+    var seq = ++rangeSeq;
+    return fetch('/api/range?start=' + start + '&end=' + end, { cache: 'no-store' })
+      .then(function (res) {
+        return res.json().then(function (j) {
+          if (!res.ok) throw new Error(j.detail || ('HTTP ' + res.status));
+          return j;
+        });
+      })
+      .then(function (data) {
+        if (seq !== rangeSeq) return;              // a newer range was asked for
+        var board = document.getElementById('board');
+        if (background && board.contains(document.activeElement) &&
+            document.activeElement.tagName === 'INPUT') return;
+        RANGE = data;
+        renderBoard();
+      })
+      .catch(function (e) { if (seq === rangeSeq) say('Could not load: ' + e.message, true); });
+  }
+
+  function owed(rows) {
+    return rows.filter(function (r) { return r.is_completed || !r.optional; }).length;
+  }
+
+  function renderBoard() {
+    var board = document.getElementById('board');
+    var days = Object.keys(RANGE.days).sort();
+    var done = 0, total = 0;
+    days.forEach(function (d) {
+      if (d > RANGE.today) return;
+      var rows = RANGE.days[d];
+      done += rows.filter(function (r) { return r.is_completed; }).length;
+      total += owed(rows);
+    });
+    board.innerHTML = '';
+    var sum = document.createElement('p');
+    sum.className = 'summary';
+    sum.textContent = total ? done + ' of ' + total + ' done so far in view' : 'Nothing due yet in view';
+    board.appendChild(sum);
+
+    var grid = document.createElement('div');
+    if (VIEW === 'month') {
+      grid.className = 'month';
+      ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach(function (w) {
+        var h = document.createElement('div'); h.className = 'wd'; h.textContent = w; grid.appendChild(h);
+      });
+      for (var i = 0; i < (weekday(days[0]) + 6) % 7; i++) {
+        var blank = document.createElement('div'); blank.className = 'col blank'; grid.appendChild(blank);
+      }
+    } else {
+      grid.className = 'cols';
+      grid.style.gridTemplateColumns = 'repeat(' + days.length + ', minmax(160px, 1fr))';
+    }
+    days.forEach(function (d) { grid.appendChild(column(d)); });
+    board.appendChild(grid);
+  }
+
+  function column(day) {
+    var rows = RANGE.days[day];
+    var future = day > RANGE.today, locked = future || !writable(day);
+    var col = document.createElement('div');
+    col.className = 'col' + (day === RANGE.today ? ' is-today' : '') + (future ? ' future' : '');
+    var nDone = rows.filter(function (r) { return r.is_completed; }).length;
+    var head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'col-head';
+    head.title = 'Open ' + day;
+    head.innerHTML = '<span class="dn">' + parts(day)[2] + '</span><span class="dw">' +
+      esc(label(day, { weekday: 'short' })) + '</span>' +
+      (rows.length && !future ? '<span class="cnt">' + nDone + '/' + owed(rows) + '</span>' : '');
+    head.addEventListener('click', function () { go('day', day); });
+    col.appendChild(head);
+
+    var body = document.createElement('div');
+    body.className = 'col-body';
+    if (!rows.length) body.innerHTML = '<div class="empty-day">Nothing scheduled</div>';
+    rows.forEach(function (r) { body.appendChild(r.title === WEIGH || r.title === WAKE ? field(r, locked) : tile(r, locked)); });
+    col.appendChild(body);
+    return col;
+  }
+
+  function tagFor(r) {
+    var st = deadlineState(r);
+    if (!st) return '';
+    var when = hm(st.due) + (localDay(st.due) > r.day ? '+1' : '');
+    return '<span class="tag' + (st.missed ? ' missed' : '') + '">' + (st.missed ? 'missed ' : '') + when + '</span>';
+  }
+
+  function paintMini(el, r) {
+    el.classList.toggle('done', !!r.is_completed);
+    el.classList.toggle('optional', !!r.optional && !r.is_completed);
+    el.title = r.is_completed && r.completed_at
+      ? 'Completed ' + new Date(r.completed_at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+      : '';
+  }
+
+  function tile(r, locked) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'mini';
+    b.disabled = locked;
+    b.innerHTML = '<span class="mbox"></span><span class="t">' + esc(r.title) + '</span>' + tagFor(r);
+    paintMini(b, r);
+    b.addEventListener('click', function () {
+      var next = !r.is_completed;
+      r.is_completed = next;
+      r.completed_at = next ? new Date().toISOString() : null;
+      paintMini(b, r);
+      post(r.id ? '/api/task/' + r.id + '/toggle?done=' + next
+                : '/api/day/' + r.day + '/check?title=' + encodeURIComponent(r.title) + '&done=' + next)
+        .then(function (u) {
+          if (u && u.id) { r.id = u.id; delete r.virtual; }
+          if (u && 'completed_at' in u) r.completed_at = u.completed_at;
+          paintMini(b, r);
+          delete CACHE[r.day];
+          say(r.title + (next ? ' done' : ' un-done') + ' · ' + label(r.day, { month: 'short', day: 'numeric' }));
+        })
+        .catch(function (e) {
+          r.is_completed = !next;
+          paintMini(b, r);
+          say(e.message, true);
+        });
+    });
+    return b;
+  }
+
+  /* Weight and wake-up, editable in place. Saved on change -- blur or Enter --
+     like the day view, never while typing. */
+  function field(r, locked) {
+    var isW = r.title === WEIGH;
+    var el = document.createElement('div');
+    el.className = 'mini field';
+    var input = document.createElement('input');
+    if (isW) { input.type = 'number'; input.step = '0.1'; input.inputMode = 'decimal'; input.placeholder = 'lbs'; }
+    else { input.type = 'time'; }
+    input.disabled = locked;
+    var shown = isW ? (r.weight_lbs != null ? Number(r.weight_lbs).toFixed(1) : '') : ((wakeFromNotes(r.notes) || {}).value || '');
+    input.value = shown;
+    el.innerHTML = '<span class="mbox"></span><span class="lbl">' + (isW ? 'Weight' : 'Wake') + '</span>';
+    el.appendChild(input);
+    var tag = tagFor(r);
+    if (tag) el.insertAdjacentHTML('beforeend', tag);
+    paintMini(el, r);
+    el.addEventListener('click', function (e) { if (e.target !== input && !input.disabled) input.focus(); });
+    input.addEventListener('change', function () {
+      var v = input.value;
+      if (!v || v === shown) return;
+      var url = isW ? '/api/day/' + r.day + '/weight?lbs=' + encodeURIComponent(v)
+                    : '/api/day/' + r.day + '/wake?time=' + encodeURIComponent(v);
+      var was = r.is_completed;
+      r.is_completed = true; paintMini(el, r);
+      post(url).then(function (u) {
+        shown = v;
+        if (u && u.id) { r.id = u.id; delete r.virtual; }
+        if (u && 'completed_at' in u) r.completed_at = u.completed_at;
+        if (isW && u && u.weight_lbs !== undefined) r.weight_lbs = u.weight_lbs;
+        paintMini(el, r);
+        delete CACHE[r.day];
+        say((isW ? 'Weight ' + Number(v).toFixed(1) + ' lbs' : 'Wake-up ' + v) + ' saved · ' +
+            label(r.day, { month: 'short', day: 'numeric' }) + (isW && u && u.warning ? ' — ' + u.warning : ''));
+      }).catch(function (e) {
+        r.is_completed = was; paintMini(el, r); input.value = shown; say(e.message, true);
+      });
+    });
+    return el;
+  }
+
+  go(VIEW, DAY, { replace: true });
 })();
 </script>

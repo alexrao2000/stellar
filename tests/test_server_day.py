@@ -85,7 +85,6 @@ def test_analytical_page_shells_do_not_block_on_history(monkeypatch):
     )
 
     pages = [
-        (server.page_calendar(), "/api/task_history"),
         (server.page_weight(), "/api/weights"),
         (server.page_wake(), "/api/wake"),
         (server.page_consistency(), "/api/consistency"),
@@ -180,68 +179,14 @@ def test_today_page_queues_rapid_task_toggles():
     assert "if (!b.dataset.syncing) syncDesired();" in html
 
 
-def test_set_weight_materializes_today_before_saving(monkeypatch):
-    row = {
-        "id": 42,
-        "day": "2026-08-30",
-        "title": "Weigh yourself",
-        "notes": "Current Weight: 150.0 lbs",
-    }
-    updated = {**row, "weight_lbs": 150.1, "is_completed": True}
-    day_reads = iter([[], [row]])
-    ensured = []
-
-    class Query:
-        def __init__(self):
-            self.columns = ""
-
-        def select(self, columns):
-            self.columns = columns
-            return self
-
-        def eq(self, *_args):
-            return self
-
-        def lt(self, *_args):
-            return self
-
-        def filter(self, *_args):
-            return self
-
-        def order(self, *_args, **_kwargs):
-            return self
-
-        def limit(self, *_args):
-            return self
-
-        def update(self, *_args):
-            self.columns = "update"
-            return self
-
-        def execute(self):
-            return SimpleNamespace(data=[] if self.columns != "update" else [updated])
-
-    class Client:
-        def table(self, name):
-            if name == "task_history":
-                return Query()
-            raise AssertionError(name)
-
-    monkeypatch.setattr(server, "_check_writable", lambda day: day)
-    monkeypatch.setattr(server, "_sb", lambda: Client())
-    monkeypatch.setattr(server, "_day_rows", lambda _client, _day: next(day_reads))
-    monkeypatch.setattr(
-        server,
-        "api_ensure_day",
-        lambda day: ensured.append(day) or {"day": day, "created": ["Weigh yourself"]},
-    )
-    monkeypatch.setattr(server, "_cache_apply", lambda _rows: None)
-
-    result = server.api_set_weight("2026-08-30", 150.1)
-
-    assert ensured == ["2026-08-30"]
-    assert result["weight_lbs"] == 150.1
-
+def test_set_weight_makes_only_its_own_row(db, monkeypatch):
+    """Recording a weight on a day with no rows makes that one row, not the day."""
+    fake = db([_task(8, "Weigh yourself", sort_order=1), _task(1, "Run", sort_order=2)])
+    monkeypatch.setattr(server, "_day_rows", lambda client, day: [
+        r for r in fake.tables["task_history"] if r["day"] == day])
+    server.api_set_weight("2026-10-13", 150.2)
+    rows = fake.tables["task_history"]
+    assert [(r["title"], r["is_completed"]) for r in rows] == [("Weigh yourself", True)]
 
 def test_postgrest_failures_return_a_retryable_api_error():
     import asyncio
@@ -511,6 +456,9 @@ class _FakeQuery:
     def delete(self): self.op = "delete"; return self
     def limit(self, n): self.cap = n; return self
 
+    def order(self, col, desc=False):
+        self.sort = (col, desc); return self
+
     def eq(self, col, val):
         self.preds.append(lambda r: r.get(col) == val); return self
 
@@ -518,7 +466,8 @@ class _FakeQuery:
         self.preds.append(lambda r: str(r.get(col)) < str(val)); return self
 
     def filter(self, col, op, val):
-        ops = {"gte": lambda a, b: a >= b, "gt": lambda a, b: a > b}
+        ops = {"gte": lambda a, b: a >= b, "gt": lambda a, b: a > b,
+               "lte": lambda a, b: a <= b, "lt": lambda a, b: a < b}
         self.preds.append(lambda r: ops[op](str(r.get(col)), str(val))); return self
 
     def execute(self):
@@ -526,6 +475,9 @@ class _FakeQuery:
         hit = [r for r in rows if all(p(r) for p in self.preds)]
         if self.op == "select":
             data = [dict(r) for r in hit]
+            if getattr(self, "sort", None):
+                col, desc = self.sort
+                data.sort(key=lambda r: str(r.get(col)), reverse=desc)
         elif self.op == "insert":
             new = dict(self.payload, id=next(self.db.ids))
             new.setdefault("series_id", None); new.setdefault("deleted_at", None)
@@ -722,3 +674,53 @@ def test_settings_page_lists_tasks_and_flags_the_migration(db, monkeypatch):
     assert '"migrated":true' in html and '"title":"Run"' in html and '"binned":true' in html
     monkeypatch.setattr(server, "_definitions", lambda fresh=False: [_defn(1, "Run")])
     assert '"migrated":false' in server.page_tasks()
+
+
+# ---- the Tasks tab: viewing never writes ---------------------------------------
+def test_calendar_redirects_into_the_tasks_tab():
+    r = server.page_calendar()
+    assert r.status_code == 308 and r.headers["location"] == "/?view=week"
+
+
+def test_a_day_lists_scheduled_tasks_without_writing(db, monkeypatch):
+    from zoneinfo import ZoneInfo
+    fake = db([_task(1, "Run", sort_order=1), _task(2, "Floss", sort_order=2, starts_on="2026-10-20")])
+    monkeypatch.setattr(server, "_app_tz", lambda: ZoneInfo("America/Los_Angeles"))
+    monkeypatch.setattr(server, "_day_rows", lambda client, day: [])
+    out = server.api_day("2026-10-15", Response(), fresh=True)
+    assert [(r["title"], r["id"], r["virtual"]) for r in out] == [("Run", None, True)]
+    assert fake.tables["task_history"] == []          # nothing was written
+
+
+def test_range_reads_once_and_fills_each_day(db, monkeypatch):
+    from zoneinfo import ZoneInfo
+    rows = [{"id": 1, "day": "2026-10-12", "list_title": "Daily", "title": "Run", "is_completed": True}]
+    fake = db([_task(1, "Run", sort_order=1)], rows)
+    monkeypatch.setattr(server, "_app_tz", lambda: ZoneInfo("America/Los_Angeles"))
+    monkeypatch.setattr(server, "_shape", lambda r: dict(r))
+    out = server.api_range("2026-10-12", "2026-10-14", Response())
+    assert list(out["days"]) == ["2026-10-12", "2026-10-13", "2026-10-14"]
+    assert out["days"]["2026-10-12"][0]["is_completed"] is True
+    assert out["days"]["2026-10-14"][0]["virtual"] is True
+    with pytest.raises(HTTPException):
+        server.api_range("2026-01-01", "2026-12-31", Response())
+
+
+def test_ticking_a_scheduled_task_makes_its_row(db, monkeypatch):
+    fake = db([_task(1, "Run", sort_order=1), _task(2, "Floss", sort_order=2)])
+    monkeypatch.setattr(server, "_day_rows", lambda client, day: [
+        r for r in fake.tables["task_history"] if r["day"] == day])
+    server.api_check("2026-10-13", "Run", True)
+    assert [(r["title"], r["is_completed"]) for r in fake.tables["task_history"]] == [("Run", True)]
+    with pytest.raises(HTTPException):
+        server.api_check("2026-10-14", "Run", True)      # hasn't happened yet
+    with pytest.raises(HTTPException):
+        server.api_check("2026-10-13", "Not a task", True)
+
+
+def test_consistency_counts_unopened_days_as_owed(db, monkeypatch):
+    db([_task(1, "Run", sort_order=1, starts_on="2026-10-11")])
+    monkeypatch.setattr(server, "_task_projection", lambda cols, title=None: [
+        {"day": "2026-10-11", "list_title": "Daily", "title": "Run", "is_completed": True}])
+    out = sorted((r["day"], r["is_completed"]) for r in server.api_consistency())
+    assert out == [("2026-10-11", True), ("2026-10-12", False), ("2026-10-13", False)]
