@@ -11,6 +11,7 @@
   --done-ink: #8B84A6;
   --todo-bg: #6D4AC4;
   --todo-ink: #FFFFFF;
+  --opt-bg: #2563C9; --opt-ink: #FFFFFF;
   --today: #C2410C;
   --shadow: 0 1px 2px rgba(25,22,39,0.06), 0 2px 8px rgba(25,22,39,0.04);
 }
@@ -20,6 +21,7 @@
     --ink: #EBE8F5; --ink-muted: #948DAD; --rule: #2E2A3D;
     --done-bg: #221E30; --done-ink: #7B7496;
     --todo-bg: #8B63E8; --todo-ink: #120E1C;
+    --opt-bg: #5B9BF0; --opt-ink: #0B1424;
     --today: #F0834E;
     --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 2px 10px rgba(0,0,0,0.3);
   }
@@ -29,6 +31,7 @@
   --ink: #EBE8F5; --ink-muted: #948DAD; --rule: #2E2A3D;
   --done-bg: #221E30; --done-ink: #7B7496;
   --todo-bg: #8B63E8; --todo-ink: #120E1C;
+  --opt-bg: #5B9BF0; --opt-ink: #0B1424;
   --today: #F0834E;
   --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 2px 10px rgba(0,0,0,0.3);
 }
@@ -37,6 +40,7 @@
   --ink: #191627; --ink-muted: #6A6480; --rule: #DCD8E6;
   --done-bg: #EDEAF4; --done-ink: #8B84A6;
   --todo-bg: #6D4AC4; --todo-ink: #FFFFFF;
+  --opt-bg: #2563C9; --opt-ink: #FFFFFF;
   --today: #C2410C;
   --shadow: 0 1px 2px rgba(25,22,39,0.06), 0 2px 8px rgba(25,22,39,0.04);
 }
@@ -137,6 +141,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--todo-bg); o
 .tile.done { background: var(--done-bg); color: var(--done-ink); text-decoration: line-through;
   text-decoration-thickness: 1px; text-decoration-color: color-mix(in srgb, var(--done-ink) 55%, transparent); }
 .tile.todo { background: var(--todo-bg); color: var(--todo-ink); font-weight: 600; }
+/* An unticked optional task was allowed to go undone: blue, and not a miss. */
+.tile.todo.optional { background: var(--opt-bg); color: var(--opt-ink); }
 .tile:hover { transform: translateX(2px); }
 .tile .w {
   display: inline-block; margin-left: 6px; font-family: ui-monospace, Menlo, monospace;
@@ -225,6 +231,8 @@ footer.foot b { color: var(--ink); font-weight: 600; }
 <script>
 (function () {
   var BOOT = JSON.parse(document.getElementById('bootstrap').textContent);
+  var OPTIONAL = {};
+  (BOOT.optional || []).forEach(function (t) { OPTIONAL[t] = true; });
   var TITLES, NOTES, LISTS, ROWS;
 
   /* Interning happens at build time for an inlined snapshot; in live mode the
@@ -376,11 +384,13 @@ footer.foot b { color: var(--ink); font-weight: 600; }
       col.className = 'col' + (day === todayStr ? ' is-today' : '');
 
       var nDone = rows.filter(function (i) { return ROWS[i][3]; }).length;
-      done += nDone; total += rows.length;
+      /* An unticked optional task is neither done nor owed. */
+      var owed = rows.filter(function (i) { return ROWS[i][3] || !OPTIONAL[TITLES[ROWS[i][1]]]; }).length;
+      done += nDone; total += owed;
 
       var head =
         '<div class="col-head">' +
-          (rows.length ? '<span class="count mono">' + nDone + '/' + rows.length + '</span>' : '') +
+          (rows.length ? '<span class="count mono">' + nDone + '/' + owed + '</span>' : '') +
           '<span class="wd">' + WD[d.getUTCDay()] + '</span>' +
           '<span class="dm">' + d.getUTCDate() + '</span>' +
           '<span class="mo mono">' + MO[d.getUTCMonth()] + " '" + String(d.getUTCFullYear()).slice(2) + '</span>' +
@@ -404,7 +414,7 @@ footer.foot b { color: var(--ink); font-weight: 600; }
 
   function tile(i) {
     var r = ROWS[i];
-    var cls = r[3] ? 'done' : 'todo';
+    var cls = r[3] ? 'done' : 'todo' + (OPTIONAL[TITLES[r[1]]] ? ' optional' : '');
     var w = '';
     if (r[7] === 1) w = '<span class="w">' + r[6].toFixed(1) + '</span>';
     else if (r[7] === 2) w = '<span class="w nr">not rec.</span>';

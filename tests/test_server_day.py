@@ -382,4 +382,179 @@ def test_today_page_lists_measurements_and_tasks_in_one_reorderable_list():
     assert html.index('id="item-weight"') > tasks
     assert html.index('id="item-wake"') > tasks
     assert "post('/api/task_order', { titles: ORDER })" in html
-    assert "innerHTML = ''" not in html        # the list is never wiped wholesale
+    # The list is never wiped wholesale: the measurement entries live in it.
+    assert "host.innerHTML = ''" not in html
+    assert "getElementById('tasks').innerHTML" not in html
+
+
+# ---- optional tasks and deadlines ------------------------------------------
+def test_default_order_puts_optional_tasks_last():
+    defs = [
+        _defn(1, "Run", created_at="2026-07-01T00:00:00+00:00") | {"optional": True},
+        _defn(2, "Floss", created_at="2026-08-01T00:00:00+00:00"),
+        _defn(8, "Weigh yourself"),
+    ]
+    m = {"Weigh yourself", "Wake Up"}
+    ordered = sorted(defs, key=lambda d: server._definitions_order_key(d, m))
+    assert [d["title"] for d in ordered] == ["Weigh yourself", "Floss", "Run"]
+
+
+def test_deadline_reaches_into_the_next_day():
+    from zoneinfo import ZoneInfo
+    la = ZoneInfo("America/Los_Angeles")
+    # 23:00 on Oct 12 Pacific (PDT, UTC-7) and 01:30 on Oct 13 via 1530 minutes.
+    assert server._deadline_at("2026-10-12", 23 * 60, la) == "2026-10-13T06:00:00+00:00"
+    assert server._deadline_at("2026-10-12", 1440 + 90, la) == "2026-10-13T08:30:00+00:00"
+    assert server._deadline_at("2026-10-12", None, la) is None
+
+
+def test_deadline_keeps_its_clock_time_across_a_daylight_saving_change():
+    from zoneinfo import ZoneInfo
+    la = ZoneInfo("America/Los_Angeles")
+    # Clocks go back at 2am on 2026-11-01; 1:00am the next day is still PST 01:00.
+    assert server._deadline_at("2026-10-31", 1440 + 60 + 60, la) == "2026-11-01T10:00:00+00:00"
+
+
+def test_day_read_carries_optional_and_deadline(monkeypatch):
+    defs = [_defn(1, "Run", 1) | {"optional": True, "deadline_minutes": 1530},
+            _defn(2, "Floss", 2) | {"optional": False, "deadline_minutes": None}]
+    rows = [{"id": 1, "day": "2026-10-12", "list_title": "Daily", "title": "Run"},
+            {"id": 2, "day": "2026-10-12", "list_title": "Daily", "title": "Floss"}]
+    monkeypatch.setattr(server, "_definitions", lambda fresh=False: defs)
+    monkeypatch.setattr(server, "_sb", lambda: object())
+    monkeypatch.setattr(server, "_day_rows", lambda client, day: rows)
+    monkeypatch.setattr(server, "_shape", lambda r: dict(r))
+    from zoneinfo import ZoneInfo
+    monkeypatch.setattr(server, "_app_tz", lambda: ZoneInfo("America/Los_Angeles"))
+
+    result = {r["title"]: r for r in server.api_day("2026-10-12", Response(), fresh=True)}
+
+    assert result["Run"]["optional"] is True
+    assert result["Run"]["deadline_at"] == "2026-10-13T08:30:00+00:00"
+    assert result["Floss"]["optional"] is False and result["Floss"]["deadline_at"] is None
+    assert "optional" not in rows[0]          # the cached rows are not mutated
+
+
+class _DefsClient:
+    def __init__(self, rows):
+        self.rows = {r["id"]: dict(r) for r in rows}
+        self.writes = []
+
+    def table(self, name):
+        assert name == "recurring_tasks"
+        client = self
+
+        class Q:
+            def update(self, values):
+                self.values = values
+                return self
+
+            def eq(self, column, value):
+                self.id = value
+                return self
+
+            def execute(self):
+                client.writes.append((self.id, self.values))
+                client.rows[self.id].update(self.values)
+                return SimpleNamespace(data=[client.rows[self.id]])
+
+        return Q()
+
+
+def test_making_a_task_optional_never_moves_it(monkeypatch):
+    """With the order still on default, flipping to optional freezes it first."""
+    defs = [_defn(8, "Weigh yourself") | {"optional": False, "deadline_minutes": None},
+            _defn(1, "Run") | {"optional": False, "deadline_minutes": None},
+            _defn(2, "Floss") | {"optional": False, "deadline_minutes": None}]
+    client = _DefsClient(defs)
+    monkeypatch.setattr(server, "_definitions", lambda fresh=False: defs)
+    monkeypatch.setattr(server, "_sb", lambda: client)
+
+    server.api_definition_settings(1, server.DefinitionSettings(optional=True))
+
+    assert client.writes[:3] == [(8, {"sort_order": 1}), (1, {"sort_order": 2}),
+                                 (2, {"sort_order": 3})]
+    assert client.writes[3] == (1, {"optional": True})
+
+
+def test_setting_a_deadline_does_not_touch_the_order(monkeypatch):
+    defs = [_defn(1, "Run") | {"optional": False, "deadline_minutes": None}]
+    client = _DefsClient(defs)
+    monkeypatch.setattr(server, "_definitions", lambda fresh=False: defs)
+    monkeypatch.setattr(server, "_sb", lambda: client)
+
+    server.api_definition_settings(1, server.DefinitionSettings(deadline_minutes=1530))
+
+    assert client.writes == [(1, {"deadline_minutes": 1530})]
+
+
+def test_settings_refuse_before_the_migration(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(server, "_definitions", lambda fresh=False: [_defn(1, "Run")])
+    with pytest.raises(HTTPException) as err:
+        server.api_definition_settings(1, server.DefinitionSettings(optional=True))
+    assert err.value.status_code == 409
+
+
+def test_deadline_out_of_range_is_refused():
+    import pytest
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException):
+        server.api_definition_settings(1, server.DefinitionSettings(deadline_minutes=2880))
+
+
+def _completion_setup(monkeypatch, row):
+    from zoneinfo import ZoneInfo
+    writes = []
+
+    class Q:
+        def select(self, cols): return self
+        def update(self, values): writes.append(values); return self
+        def eq(self, column, value): return self
+        def execute(self): return SimpleNamespace(data=[{**row, **(writes[-1] if writes else {})}])
+
+    monkeypatch.setattr(server, "_sb", lambda: SimpleNamespace(table=lambda name: Q()))
+    monkeypatch.setattr(server, "_app_tz", lambda: ZoneInfo("America/Los_Angeles"))
+    monkeypatch.setattr(server, "_cache_apply", lambda rows: None)
+    monkeypatch.setattr(server, "_check_writable", lambda day: day)
+    return writes
+
+
+def test_completion_time_can_be_corrected(monkeypatch):
+    writes = _completion_setup(monkeypatch, {"day": "2026-10-11", "is_completed": True})
+    server.api_set_completed_at(5, "2026-10-11T22:15:00-07:00")
+    assert writes == [{"completed_at": "2026-10-12T05:15:00+00:00"}]
+
+
+def test_completion_time_cannot_precede_the_day_or_be_unticked(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    _completion_setup(monkeypatch, {"day": "2026-10-11", "is_completed": True})
+    with pytest.raises(HTTPException):
+        server.api_set_completed_at(5, "2026-10-10T23:00:00-07:00")
+    _completion_setup(monkeypatch, {"day": "2026-10-11", "is_completed": False})
+    with pytest.raises(HTTPException):
+        server.api_set_completed_at(5, "2026-10-11T22:15:00-07:00")
+
+
+def test_consistency_marks_optional_rows(monkeypatch):
+    monkeypatch.setattr(server, "_definitions",
+                        lambda fresh=False: [_defn(1, "Run") | {"optional": True}, _defn(2, "Floss")])
+    monkeypatch.setattr(server, "_task_projection", lambda cols, title=None: [
+        {"day": "2026-10-11", "list_title": "Daily", "title": "Run", "is_completed": False},
+        {"day": "2026-10-11", "list_title": "Daily", "title": "Floss", "is_completed": False}])
+    rows = {r["title"]: r for r in server.api_consistency()}
+    assert rows["Run"]["optional"] is True and rows["Floss"]["optional"] is False
+
+
+def test_settings_page_renders_before_and_after_the_migration(monkeypatch):
+    monkeypatch.setattr(server, "_definitions", lambda fresh=False: [_defn(1, "Run")])
+    assert '"migrated":false' in server.page_tasks()
+    monkeypatch.setattr(server, "_definitions", lambda fresh=False:
+                        [_defn(1, "Run") | {"optional": True, "deadline_minutes": 1530}])
+    html = server.page_tasks()
+    assert '"migrated":true' in html and '"deadline_minutes":1530' in html
