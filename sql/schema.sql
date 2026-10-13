@@ -97,15 +97,29 @@ create table if not exists public.recurring_tasks (
     deadline_minutes integer
         constraint recurring_tasks_deadline_range
         check (deadline_minutes is null or deadline_minutes between 0 and 2879),
-    created_at timestamptz default now(),
-    unique (list_title, title)
+    -- Versions of one task share a series_id (null = its own id). A change from
+    -- a given day ends one row and starts the next, so past days keep the
+    -- settings they had.
+    series_id  bigint,
+    deleted_at timestamptz,      -- set while the task is in the bin
+    created_at timestamptz default now()
 );
+
+-- For a project created before these columns: create table above is skipped.
+alter table public.recurring_tasks add column if not exists optional boolean not null default false;
+alter table public.recurring_tasks add column if not exists deadline_minutes integer;
+alter table public.recurring_tasks add column if not exists series_id bigint;
+alter table public.recurring_tasks add column if not exists deleted_at timestamptz;
+
+create unique index if not exists recurring_tasks_series_start
+    on public.recurring_tasks (coalesce(series_id, id), coalesce(starts_on, '0001-01-01'::date));
 
 alter table public.recurring_tasks enable row level security;
 
 -- The eight dailies, seeded from what task_history shows running every day of
 -- July 2026. Alphabetical, matching how the calendar orders them.
-insert into public.recurring_tasks (list_title, title, sort_order, starts_on) values
+insert into public.recurring_tasks (list_title, title, sort_order, starts_on)
+select v.list_title, v.title, v.sort_order, v.starts_on::date from (values
     ('Daily', 'Brush Teeth',         1, '2026-08-01'),
     ('Daily', 'Brush Teeth (Twice)', 2, '2026-08-01'),
     ('Daily', 'Floss',               3, '2026-08-01'),
@@ -114,7 +128,9 @@ insert into public.recurring_tasks (list_title, title, sort_order, starts_on) va
     ('Daily', 'Supplements',         6, '2026-08-01'),
     ('Daily', 'Wake Up',             7, '2026-08-01'),
     ('Daily', 'Weigh yourself',      8, '2026-08-01')
-on conflict (list_title, title) do nothing;
+) as v(list_title, title, sort_order, starts_on)
+-- Seed only into an empty table: titles are no longer unique on their own.
+where not exists (select 1 from public.recurring_tasks);
 
 -- Lock down PostgREST for anon/authenticated. The sync and keepalive jobs use
 -- the service_role key, which bypasses RLS.

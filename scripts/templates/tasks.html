@@ -54,58 +54,93 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0 0 4p
 .sub { color: var(--ink-muted); font-size: .86rem; margin: 0 0 18px; line-height: 1.45; }
 .card {
   background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
-  box-shadow: var(--shadow); overflow: hidden;
+  box-shadow: var(--shadow); overflow: hidden; margin-bottom: 16px;
 }
-.head, .row {
-  display: grid; grid-template-columns: 1fr 96px 250px; gap: 12px; align-items: center;
-  padding: 10px 14px;
+.card h2 {
+  font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-muted); margin: 0; padding: 10px 14px;
+  background: var(--surface-2); border-bottom: 1px solid var(--rule);
 }
-.head {
-  font-size: .68rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
-  color: var(--ink-muted); background: var(--surface-2); border-bottom: 1px solid var(--rule);
-}
+.row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; padding: 10px 14px; }
 .row + .row { border-top: 1px solid var(--rule); }
-.title { font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; }
-.title .dot { width: 10px; height: 10px; border-radius: 3px; background: var(--todo-bg); flex: 0 0 auto; }
-.row.optional .title .dot { background: var(--opt-bg); }
-.switch { display: inline-flex; align-items: center; gap: 6px; font-size: .84rem; cursor: pointer; }
-.switch input { width: 18px; height: 18px; accent-color: var(--opt-bg); }
-.deadline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .8rem; }
-.deadline input[type=time] {
-  font: inherit; font-family: ui-monospace, Menlo, monospace; padding: 5px 6px;
+.row.busy { opacity: .55; pointer-events: none; }
+.name { flex: 1 1 200px; display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 600; }
+.dot { width: 10px; height: 10px; border-radius: 3px; background: var(--todo-bg); flex: 0 0 auto; }
+.row.optional .dot { background: var(--opt-bg); }
+.name input[type=text] {
+  flex: 1; min-width: 0; font: inherit; font-weight: 600; padding: 5px 7px;
+  border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ink);
+}
+.name input[type=text]:hover, .name input[type=text]:focus { border-color: var(--rule); background: var(--bg); }
+.meta { font-size: .76rem; color: var(--ink-muted); font-weight: 400; }
+.ctl { display: inline-flex; align-items: center; gap: 6px; font-size: .82rem; }
+.ctl input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--opt-bg); }
+input[type=time], input[type=date], .add input[type=text] {
+  font: inherit; font-size: .84rem; padding: 5px 7px;
   border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink);
 }
-.deadline label { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-muted); }
-.deadline .clear {
-  border: none; background: none; color: var(--ink-muted); cursor: pointer; font: inherit;
-  text-decoration: underline; padding: 0;
+input[type=time], input[type=date] { font-family: ui-monospace, Menlo, monospace; }
+.btn {
+  font: inherit; font-size: .8rem; padding: 5px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
 }
-.row.saving { opacity: .6; }
+.btn:hover { background: var(--surface-2); }
+.btn.primary { background: var(--todo-bg); color: var(--todo-ink); border-color: var(--todo-bg); }
+.btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--rule)); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.link { border: none; background: none; color: var(--ink-muted); text-decoration: underline; cursor: pointer; font: inherit; font-size: .8rem; padding: 0; }
+.actions { display: inline-flex; gap: 6px; margin-left: auto; }
+.dl { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.name { flex-basis: 100%; }
+@media (min-width: 900px) { .name { flex-basis: 180px; } }
+.bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: .84rem;
+  padding: 10px 14px; margin-bottom: 16px; border: 1px solid var(--rule); border-radius: 10px;
+  background: var(--surface);
+}
+.bar .hint { color: var(--ink-muted); font-size: .76rem; flex-basis: 100%; }
+.add { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; padding: 12px 14px; }
+.add input[type=text] { flex: 1 1 220px; }
+.empty { padding: 12px 14px; color: var(--ink-muted); font-size: .84rem; }
+.why { font-size: .74rem; color: var(--ink-muted); flex-basis: 100%; }
 .notice {
-  border: 1px solid var(--warn); color: var(--ink); background: var(--surface);
-  padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; font-size: .86rem; line-height: 1.45;
+  border: 1px solid var(--warn); background: var(--surface); padding: 10px 14px;
+  border-radius: 8px; margin-bottom: 14px; font-size: .86rem; line-height: 1.45;
 }
-.notice code { font-size: .8rem; }
-#status { margin-top: 14px; font-size: .82rem; min-height: 1.3em; font-family: ui-monospace, Menlo, monospace; }
+#status { margin-top: 4px; font-size: .82rem; min-height: 1.3em; font-family: ui-monospace, Menlo, monospace; }
 #status.ok { color: var(--ok); } #status.bad { color: var(--bad); }
-@media (max-width: 560px) {
-  .head { display: none; }
-  .row { grid-template-columns: 1fr auto; }
-  .deadline { grid-column: 1 / -1; }
-}
 </style>
 
 <div class="wrap">
   <p class="eyebrow">Task Tracker</p>
   <h1>Settings</h1>
-  <p class="sub">Optional tasks show blue and an unticked one never counts as a miss.
-    A deadline flags the task as missed on Today if it is ticked after the deadline,
-    or is still unticked once it passes. Tick <b>next day</b> for a deadline after midnight.</p>
+  <p class="sub">Changes apply from the day below onward, so earlier days keep the settings
+    they had. Optional tasks show blue and an unticked one is never a miss. A deadline marks
+    a task missed if it is ticked late or still unticked when the deadline passes.</p>
   <div id="notice"></div>
-  <div class="card">
-    <div class="head"><span>Task</span><span>Optional</span><span>Deadline</span></div>
-    <div id="rows"></div>
+
+  <div class="bar">
+    <label class="ctl">Changes apply from <input type="date" id="from"></label>
+    <label class="ctl"><input type="checkbox" id="alldays"> to all days, past included</label>
+    <span class="hint">"All days" rewrites how past days are judged. It doesn't apply to renames:
+      past days keep the name they had.</span>
   </div>
+
+  <div class="card"><h2>Tasks</h2><div id="live"></div></div>
+
+  <div class="card"><h2>Add a task</h2>
+    <div class="add">
+      <input type="text" id="new-title" placeholder="Task name" maxlength="200">
+      <label class="ctl"><input type="checkbox" id="new-optional"> Optional</label>
+      <label class="ctl">Deadline <input type="time" id="new-time"></label>
+      <label class="ctl"><input type="checkbox" id="new-next"> next day</label>
+      <label class="ctl">Starts <input type="date" id="new-start"></label>
+      <button type="button" class="btn primary" id="new-add">Add</button>
+    </div>
+  </div>
+
+  <div class="card" id="stopped-card" hidden><h2>Stopped</h2><div id="stopped"></div></div>
+  <div class="card" id="bin-card" hidden><h2>Bin</h2><div id="bin"></div></div>
   <div id="status"></div>
 </div>
 
@@ -121,97 +156,227 @@ h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; margin: 0 0 4p
   }
   function say(msg, bad) {
     var el = document.getElementById('status');
-    el.textContent = msg;
-    el.className = !msg ? '' : (bad ? 'bad' : 'ok');
+    el.textContent = msg; el.className = !msg ? '' : (bad ? 'bad' : 'ok');
   }
   function pad(n) { return String(n).padStart(2, '0'); }
-  /* minutes -> [HH:MM, next day?] and back. 1440 and up is the following day. */
   function split(m) {
     if (m === null || m === undefined) return ['', false];
-    var next = m >= 1440, r = m % 1440;
-    return [pad(Math.floor(r / 60)) + ':' + pad(r % 60), next];
+    var r = m % 1440;
+    return [pad(Math.floor(r / 60)) + ':' + pad(r % 60), m >= 1440];
   }
   function join(hhmm, next) {
     if (!hhmm) return null;
     var p = hhmm.split(':');
     return Number(p[0]) * 60 + Number(p[1]) + (next ? 1440 : 0);
   }
+  function fmtDay(d) {
+    if (!d) return '';
+    var x = new Date(d + 'T12:00:00');
+    return x.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  }
 
-  function save(row, d, changes) {
-    row.classList.add('saving');
-    return fetch('/api/definitions/' + d.id, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(changes)
+  /* The "from" day survives the reload that follows each change. */
+  var fromEl = document.getElementById('from'), allEl = document.getElementById('alldays');
+  fromEl.min = BOOT.floor;
+  try { fromEl.value = sessionStorage.getItem('settings-from') || BOOT.today; }
+  catch (e) { fromEl.value = BOOT.today; }
+  fromEl.addEventListener('change', function () {
+    try { sessionStorage.setItem('settings-from', fromEl.value); } catch (e) {}
+  });
+  document.getElementById('new-start').value = BOOT.today;
+  document.getElementById('new-start').min = BOOT.floor;
+
+  function api(method, url, body) {
+    return fetch(url, {
+      method: method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (j) {
         if (!res.ok) throw new Error(j.detail || ('HTTP ' + res.status));
         return j;
       });
-    }).then(function (j) {
-      d.optional = j.optional; d.deadline_minutes = j.deadline_minutes;
-      say(d.title + ' saved');
-      return j;
+    });
+  }
+  /* Every change can add or end a version, so the page simply reloads with the
+     server's view rather than patching itself. */
+  function act(row, promise, done) {
+    if (row) row.classList.add('busy');
+    return promise.then(function (j) {
+      try { sessionStorage.setItem('settings-said', done(j)); } catch (e) {}
+      location.reload();
     }).catch(function (e) {
+      if (row) row.classList.remove('busy');
       say(e.message, true);
       throw e;
-    }).then(function (j) { row.classList.remove('saving'); return j; },
-            function (e) { row.classList.remove('saving'); paint(row, d); });
+    });
+  }
+  try {
+    var said = sessionStorage.getItem('settings-said');
+    if (said) { say(said); sessionStorage.removeItem('settings-said'); }
+  } catch (e) {}
+
+  function change(row, t, changes) {
+    var body = Object.assign({}, changes);
+    if (allEl.checked && !('title' in changes)) body.all_days = true;
+    else body.from_day = fromEl.value || BOOT.today;
+    var when = body.all_days ? 'all days' : ('from ' + fmtDay(body.from_day));
+    return act(row, api('POST', '/api/series/' + t.id, body),
+               function (j) { return j.title + ' updated, ' + when; });
   }
 
-  function paint(row, d) {
-    row.classList.toggle('optional', !!d.optional);
-    row.querySelector('.opt').checked = !!d.optional;
-    var s = split(d.deadline_minutes);
-    row.querySelector('.time').value = s[0];
-    row.querySelector('.next').checked = s[1];
-  }
-
-  var host = document.getElementById('rows');
   if (!BOOT.migrated) {
     document.getElementById('notice').innerHTML =
-      '<div class="notice">These settings need two new columns. Run ' +
-      '<code>sql/migrations/2026-10-12_optional_and_deadline.sql</code> in the Supabase ' +
-      'SQL editor, then reload this page.</div>';
+      '<div class="notice">Task management needs a database change. Run ' +
+      '<code>sql/migrations/2026-10-13_versioned_definitions.sql</code> in the Supabase SQL ' +
+      'editor, then reload this page.</div>';
   }
 
-  BOOT.defs.forEach(function (d) {
+  var live = BOOT.tasks.filter(function (t) { return !t.binned && !t.stopped; });
+  var stopped = BOOT.tasks.filter(function (t) { return !t.binned && t.stopped; });
+  var binned = BOOT.tasks.filter(function (t) { return t.binned; });
+
+  function liveRow(t) {
+    var row = document.createElement('div');
+    row.className = 'row' + (t.optional ? ' optional' : '');
+    var s = split(t.deadline_minutes);
+    row.innerHTML =
+      '<div class="name"><span class="dot"></span>' +
+        (t.measurement
+          ? '<span>' + esc(t.title) + ' <span class="meta">measurement</span></span>'
+          : '<input type="text" class="title" maxlength="200" aria-label="Name">') +
+        (t.ends_on ? '<span class="meta">last day ' + esc(fmtDay(t.ends_on)) + '</span>' : '') +
+      '</div>' +
+      '<label class="ctl"><input type="checkbox" class="opt"> Optional</label>' +
+      '<span class="dl"><span class="ctl">Deadline <input type="time" class="time"></span>' +
+      '<label class="ctl"><input type="checkbox" class="next"> next day</label>' +
+      '<button type="button" class="link clear">clear</button></span>' +
+      '<span class="actions">' +
+        '<button type="button" class="btn stop">Stop</button>' +
+        (t.measurement ? '' : '<button type="button" class="btn danger bin">Delete</button>') +
+      '</span>';
+    var title = row.querySelector('.title');
+    if (title) title.value = t.title;
+    row.querySelector('.opt').checked = t.optional;
+    row.querySelector('.time').value = s[0];
+    row.querySelector('.next').checked = s[1];
+
+    if (title) {
+      title.addEventListener('change', function () {
+        var v = title.value.trim();
+        if (!v || v === t.title) { title.value = t.title; return; }
+        change(row, t, { title: v }).catch(function () { title.value = t.title; });
+      });
+      title.addEventListener('keydown', function (e) { if (e.key === 'Enter') title.blur(); });
+    }
+    row.querySelector('.opt').addEventListener('change', function (e) {
+      change(row, t, { optional: e.target.checked })
+        .catch(function () { e.target.checked = t.optional; });
+    });
+    function deadline() {
+      var m = join(row.querySelector('.time').value, row.querySelector('.next').checked);
+      if (m === t.deadline_minutes) return;
+      change(row, t, { deadline_minutes: m }).catch(function () {
+        row.querySelector('.time').value = s[0]; row.querySelector('.next').checked = s[1];
+      });
+    }
+    row.querySelector('.time').addEventListener('change', deadline);
+    row.querySelector('.next').addEventListener('change', deadline);
+    row.querySelector('.clear').addEventListener('click', function () {
+      row.querySelector('.time').value = ''; row.querySelector('.next').checked = false; deadline();
+    });
+
+    row.querySelector('.stop').addEventListener('click', function () {
+      var acts = row.querySelector('.actions');
+      acts.innerHTML = '<label class="ctl">Last day <input type="date" class="last"></label>' +
+        '<button type="button" class="btn primary go">Stop</button>' +
+        '<button type="button" class="btn cancel">Cancel</button>';
+      var last = acts.querySelector('.last');
+      last.value = BOOT.today;
+      acts.querySelector('.cancel').addEventListener('click', function () { location.reload(); });
+      acts.querySelector('.go').addEventListener('click', function () {
+        act(row, api('POST', '/api/series/' + t.id + '/stop', { last_day: last.value }),
+            function (j) {
+              return j.title + ' stopped after ' + fmtDay(j.ends_on) +
+                (j.blank_rows_removed ? ' (' + j.blank_rows_removed + ' blank days removed)' : '');
+            });
+      });
+    });
+    var bin = row.querySelector('.bin');
+    if (bin) bin.addEventListener('click', function () {
+      act(row, api('POST', '/api/series/' + t.id + '/bin'),
+          function (j) { return j.title + ' moved to the bin'; });
+    });
+    return row;
+  }
+
+  function stoppedRow(t) {
+    var row = document.createElement('div');
+    row.className = 'row' + (t.optional ? ' optional' : '');
+    row.innerHTML = '<div class="name"><span class="dot"></span><span>' + esc(t.title) +
+      ' <span class="meta">stopped after ' + esc(fmtDay(t.ends_on)) + '</span></span></div>' +
+      '<span class="actions"><button type="button" class="btn resume">Resume</button>' +
+      (t.measurement ? '' : '<button type="button" class="btn danger bin">Delete</button>') + '</span>';
+    row.querySelector('.resume').addEventListener('click', function () {
+      act(row, api('POST', '/api/series/' + t.id + '/resume'),
+          function (j) { return j.title + ' resumed'; });
+    });
+    var bin = row.querySelector('.bin');
+    if (bin) bin.addEventListener('click', function () {
+      act(row, api('POST', '/api/series/' + t.id + '/bin'),
+          function (j) { return j.title + ' moved to the bin'; });
+    });
+    return row;
+  }
+
+  function binRow(t) {
     var row = document.createElement('div');
     row.className = 'row';
-    row.innerHTML =
-      '<div class="title"><span class="dot"></span><span>' + esc(d.title) + '</span></div>' +
-      '<label class="switch"><input type="checkbox" class="opt"> Optional</label>' +
-      '<div class="deadline">' +
-        '<input type="time" class="time" aria-label="Deadline for ' + esc(d.title) + '">' +
-        '<label><input type="checkbox" class="next"> next day</label>' +
-        '<button type="button" class="clear">clear</button>' +
-      '</div>';
-    paint(row, d);
-    host.appendChild(row);
-    if (!BOOT.migrated) {
-      Array.prototype.forEach.call(row.querySelectorAll('input, button'),
-        function (el) { el.disabled = true; });
-      return;
-    }
+    row.innerHTML = '<div class="name"><span class="dot"></span><span>' + esc(t.title) + '</span></div>' +
+      '<span class="actions"><button type="button" class="btn restore">Restore</button>' +
+      '<button type="button" class="btn danger erase">Delete permanently</button></span>' +
+      (t.deletable ? '' : '<span class="why">Can\u2019t be deleted permanently: ' + esc(t.why_not) + '.</span>');
+    var erase = row.querySelector('.erase');
+    erase.disabled = !t.deletable;
+    row.querySelector('.restore').addEventListener('click', function () {
+      act(row, api('POST', '/api/series/' + t.id + '/restore'),
+          function (j) { return j.title + ' restored'; });
+    });
+    erase.addEventListener('click', function () {
+      if (!confirm('Delete \u201c' + t.title + '\u201d permanently? This can\u2019t be undone.')) return;
+      act(row, api('DELETE', '/api/series/' + t.id),
+          function () { return t.title + ' deleted permanently'; });
+    });
+    return row;
+  }
 
-    /* `d` changes only once the server confirms, so a failed save repaints
-       the row back to what is actually stored. */
-    row.querySelector('.opt').addEventListener('change', function (e) {
-      row.classList.toggle('optional', e.target.checked);
-      save(row, d, { optional: e.target.checked });
-    });
-    function saveDeadline() {
-      var m = join(row.querySelector('.time').value, row.querySelector('.next').checked);
-      if (m === d.deadline_minutes) return;
-      save(row, d, { deadline_minutes: m });
-    }
-    /* `change` on a time input fires once the time is complete, not per keystroke. */
-    row.querySelector('.time').addEventListener('change', saveDeadline);
-    row.querySelector('.next').addEventListener('change', saveDeadline);
-    row.querySelector('.clear').addEventListener('click', function () {
-      row.querySelector('.time').value = '';
-      row.querySelector('.next').checked = false;
-      saveDeadline();
-    });
+  function fill(id, list, make, emptyText) {
+    var host = document.getElementById(id);
+    if (!list.length) { host.innerHTML = '<div class="empty">' + emptyText + '</div>'; return; }
+    list.forEach(function (t) { host.appendChild(make(t)); });
+  }
+  fill('live', live, liveRow, 'No tasks yet. Add one below.');
+  if (stopped.length) { document.getElementById('stopped-card').hidden = false; fill('stopped', stopped, stoppedRow, ''); }
+  if (binned.length) { document.getElementById('bin-card').hidden = false; fill('bin', binned, binRow, ''); }
+
+  document.getElementById('new-add').addEventListener('click', function () {
+    var title = document.getElementById('new-title').value.trim();
+    if (!title) { say('Give the task a name first.', true); return; }
+    act(null, api('POST', '/api/series', {
+      title: title,
+      optional: document.getElementById('new-optional').checked,
+      deadline_minutes: join(document.getElementById('new-time').value,
+                             document.getElementById('new-next').checked),
+      starts_on: document.getElementById('new-start').value || BOOT.today
+    }), function (j) { return j.title + ' added'; }).catch(function () {});
   });
+  document.getElementById('new-title').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') document.getElementById('new-add').click();
+  });
+
+  if (!BOOT.migrated) {
+    Array.prototype.forEach.call(document.querySelectorAll('.wrap input, .wrap button'),
+      function (el) { el.disabled = true; });
+  }
 })();
 </script>

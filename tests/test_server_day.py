@@ -435,77 +435,6 @@ def test_day_read_carries_optional_and_deadline(monkeypatch):
     assert "optional" not in rows[0]          # the cached rows are not mutated
 
 
-class _DefsClient:
-    def __init__(self, rows):
-        self.rows = {r["id"]: dict(r) for r in rows}
-        self.writes = []
-
-    def table(self, name):
-        assert name == "recurring_tasks"
-        client = self
-
-        class Q:
-            def update(self, values):
-                self.values = values
-                return self
-
-            def eq(self, column, value):
-                self.id = value
-                return self
-
-            def execute(self):
-                client.writes.append((self.id, self.values))
-                client.rows[self.id].update(self.values)
-                return SimpleNamespace(data=[client.rows[self.id]])
-
-        return Q()
-
-
-def test_making_a_task_optional_never_moves_it(monkeypatch):
-    """With the order still on default, flipping to optional freezes it first."""
-    defs = [_defn(8, "Weigh yourself") | {"optional": False, "deadline_minutes": None},
-            _defn(1, "Run") | {"optional": False, "deadline_minutes": None},
-            _defn(2, "Floss") | {"optional": False, "deadline_minutes": None}]
-    client = _DefsClient(defs)
-    monkeypatch.setattr(server, "_definitions", lambda fresh=False: defs)
-    monkeypatch.setattr(server, "_sb", lambda: client)
-
-    server.api_definition_settings(1, server.DefinitionSettings(optional=True))
-
-    assert client.writes[:3] == [(8, {"sort_order": 1}), (1, {"sort_order": 2}),
-                                 (2, {"sort_order": 3})]
-    assert client.writes[3] == (1, {"optional": True})
-
-
-def test_setting_a_deadline_does_not_touch_the_order(monkeypatch):
-    defs = [_defn(1, "Run") | {"optional": False, "deadline_minutes": None}]
-    client = _DefsClient(defs)
-    monkeypatch.setattr(server, "_definitions", lambda fresh=False: defs)
-    monkeypatch.setattr(server, "_sb", lambda: client)
-
-    server.api_definition_settings(1, server.DefinitionSettings(deadline_minutes=1530))
-
-    assert client.writes == [(1, {"deadline_minutes": 1530})]
-
-
-def test_settings_refuse_before_the_migration(monkeypatch):
-    import pytest
-    from fastapi import HTTPException
-
-    monkeypatch.setattr(server, "_definitions", lambda fresh=False: [_defn(1, "Run")])
-    with pytest.raises(HTTPException) as err:
-        server.api_definition_settings(1, server.DefinitionSettings(optional=True))
-    assert err.value.status_code == 409
-
-
-def test_deadline_out_of_range_is_refused():
-    import pytest
-    from fastapi import HTTPException
-
-    with pytest.raises(HTTPException):
-        server.api_definition_settings(1, server.DefinitionSettings(deadline_minutes=2880))
-
-
 def _completion_setup(monkeypatch, row):
     from zoneinfo import ZoneInfo
     writes = []
@@ -551,10 +480,245 @@ def test_consistency_marks_optional_rows(monkeypatch):
     assert rows["Run"]["optional"] is True and rows["Floss"]["optional"] is False
 
 
-def test_settings_page_renders_before_and_after_the_migration(monkeypatch):
+# ---- task management: versions, add, stop, bin ------------------------------
+import copy
+import itertools
+
+import pytest
+from fastapi import HTTPException
+
+
+class FakeDB:
+    """Just enough PostgREST for recurring_tasks and task_history."""
+
+    def __init__(self, defs, rows=()):
+        self.tables = {"recurring_tasks": [dict(d) for d in defs],
+                       "task_history": [dict(r) for r in rows]}
+        self.ids = itertools.count(1000)
+
+    def table(self, name):
+        return _FakeQuery(self, name)
+
+
+class _FakeQuery:
+    def __init__(self, db, name):
+        self.db, self.name, self.op, self.payload, self.preds = db, name, "select", None, []
+        self.cap = None
+
+    def select(self, *_a, **_k): return self
+    def insert(self, payload): self.op, self.payload = "insert", payload; return self
+    def update(self, payload): self.op, self.payload = "update", payload; return self
+    def delete(self): self.op = "delete"; return self
+    def limit(self, n): self.cap = n; return self
+
+    def eq(self, col, val):
+        self.preds.append(lambda r: r.get(col) == val); return self
+
+    def lt(self, col, val):
+        self.preds.append(lambda r: str(r.get(col)) < str(val)); return self
+
+    def filter(self, col, op, val):
+        ops = {"gte": lambda a, b: a >= b, "gt": lambda a, b: a > b}
+        self.preds.append(lambda r: ops[op](str(r.get(col)), str(val))); return self
+
+    def execute(self):
+        rows = self.db.tables[self.name]
+        hit = [r for r in rows if all(p(r) for p in self.preds)]
+        if self.op == "select":
+            data = [dict(r) for r in hit]
+        elif self.op == "insert":
+            new = dict(self.payload, id=next(self.db.ids))
+            new.setdefault("series_id", None); new.setdefault("deleted_at", None)
+            new.setdefault("ends_on", None)
+            rows.append(new); data = [dict(new)]
+        elif self.op == "update":
+            for r in hit: r.update(self.payload)
+            data = [dict(r) for r in hit]
+        else:
+            self.db.tables[self.name] = [r for r in rows if r not in hit]
+            data = [dict(r) for r in hit]
+        return SimpleNamespace(data=data[: self.cap] if self.cap else data)
+
+
+def _task(id_, title, **kw):
+    d = _defn(id_, title)
+    d.update({"optional": False, "deadline_minutes": None, "series_id": None,
+              "deleted_at": None, "starts_on": "2026-08-01", "ends_on": None})
+    d.update(kw)
+    return d
+
+
+@pytest.fixture
+def db(monkeypatch):
+    holder = {}
+
+    def make(defs, rows=()):
+        fake = FakeDB(defs, rows)
+        holder["db"] = fake
+        monkeypatch.setattr(server, "_sb", lambda: fake)
+        monkeypatch.setattr(server, "_definitions",
+                            lambda fresh=False: copy.deepcopy(fake.tables["recurring_tasks"]))
+        monkeypatch.setattr(server, "_today", lambda: "2026-10-13")
+        monkeypatch.setattr(server, "_cache_apply", lambda rows: None)
+        return fake
+
+    return make
+
+
+def _versions(fake, sid):
+    return sorted((d for d in fake.tables["recurring_tasks"] if (d["series_id"] or d["id"]) == sid),
+                  key=lambda d: d["starts_on"])
+
+
+def test_optional_from_today_keeps_past_days_required(db):
+    fake = db([_task(1, "Run", sort_order=1), _task(2, "Floss", sort_order=2)])
+    server.api_change_task(1, server.TaskChange(optional=True))
+
+    old, new = _versions(fake, 1)
+    assert (old["ends_on"], old["optional"]) == ("2026-10-12", False)
+    assert (new["starts_on"], new["ends_on"], new["optional"]) == ("2026-10-13", None, True)
+    assert new["sort_order"] == 1 and new["series_id"] == 1
+    assert server._version_on(_versions(fake, 1), "2026-09-01")["optional"] is False
+    assert server._version_on(_versions(fake, 1), "2024-01-01")["optional"] is False
+    assert server._version_on(_versions(fake, 1), "2026-10-20")["optional"] is True
+
+
+def test_changing_twice_in_one_day_edits_the_same_version(db):
+    fake = db([_task(1, "Run", sort_order=1)])
+    server.api_change_task(1, server.TaskChange(optional=True))
+    server.api_change_task(1, server.TaskChange(deadline_minutes=1380))
+    assert len(_versions(fake, 1)) == 2
+    assert _versions(fake, 1)[-1]["deadline_minutes"] == 1380
+
+
+def test_all_days_rewrites_every_version(db):
+    fake = db([_task(1, "Run", sort_order=1)])
+    server.api_change_task(1, server.TaskChange(optional=True))
+    server.api_change_task(1, server.TaskChange(deadline_minutes=600, all_days=True))
+    assert [v["deadline_minutes"] for v in _versions(fake, 1)] == [600, 600]
+
+
+def test_making_optional_on_the_default_order_pins_positions_first(db):
+    fake = db([_task(8, "Weigh yourself"), _task(1, "Run"), _task(2, "Floss",
+               created_at="2026-09-01T00:00:00+00:00")])
+    server.api_change_task(1, server.TaskChange(optional=True))
+    pos = {d["title"]: d["sort_order"] for d in fake.tables["recurring_tasks"]}
+    assert pos == {"Weigh yourself": 1, "Run": 2, "Floss": 3}
+
+
+def test_rename_from_a_day_renames_rows_from_that_day_only(db):
+    rows = [{"id": 1, "day": "2026-10-12", "list_title": "Daily", "title": "Run", "is_completed": True},
+            {"id": 2, "day": "2026-10-13", "list_title": "Daily", "title": "Run", "is_completed": False}]
+    fake = db([_task(1, "Run", sort_order=1)], rows)
+    server.api_change_task(1, server.TaskChange(title="Jog"))
+    titles = {r["day"]: r["title"] for r in fake.tables["task_history"]}
+    assert titles == {"2026-10-12": "Run", "2026-10-13": "Jog"}
+    assert [v["title"] for v in _versions(fake, 1)] == ["Run", "Jog"]
+
+
+def test_rename_cannot_apply_to_past_days_or_clash(db):
+    db([_task(1, "Run", sort_order=1), _task(2, "Floss", sort_order=2)])
+    with pytest.raises(HTTPException) as e:
+        server.api_change_task(1, server.TaskChange(title="Jog", all_days=True))
+    assert e.value.status_code == 400
+    with pytest.raises(HTTPException) as e:
+        server.api_change_task(1, server.TaskChange(title="floss"))
+    assert e.value.status_code == 409
+
+
+def test_measurements_cannot_be_renamed_or_binned(db):
+    db([_task(8, "Weigh yourself", sort_order=1)])
+    with pytest.raises(HTTPException):
+        server.api_change_task(8, server.TaskChange(title="Weight"))
+    with pytest.raises(HTTPException):
+        server.api_bin_task(8)
+
+
+def test_a_change_cannot_start_below_the_write_floor(db):
+    db([_task(1, "Run", sort_order=1)])
+    with pytest.raises(HTTPException) as e:
+        server.api_change_task(1, server.TaskChange(optional=True, from_day="2026-07-01"))
+    assert e.value.status_code == 403
+
+
+def test_added_task_goes_last_and_starts_today(db):
+    fake = db([_task(1, "Run", sort_order=1), _task(2, "Floss", sort_order=2)])
+    out = server.api_add_task(server.NewTask(title="  Stretch  ", optional=True))
+    added = next(d for d in fake.tables["recurring_tasks"] if d["title"] == "Stretch")
+    assert (added["sort_order"], added["starts_on"], added["optional"]) == (3, "2026-10-13", True)
+    assert out["title"] == "Stretch"
+    with pytest.raises(HTTPException):
+        server.api_add_task(server.NewTask(title="run"))
+
+
+def test_stop_ends_the_task_and_removes_blank_rows_after(db):
+    rows = [{"id": 1, "day": "2026-10-13", "list_title": "Daily", "title": "Run", "is_completed": True},
+            {"id": 2, "day": "2026-10-14", "list_title": "Daily", "title": "Run", "is_completed": False}]
+    fake = db([_task(1, "Run", sort_order=1)], rows)
+    out = server.api_stop_task(1, server.StopTask(last_day="2026-10-13"))
+    assert out["ends_on"] == "2026-10-13" and out["blank_rows_removed"] == 1
+    assert [r["id"] for r in fake.tables["task_history"]] == [1]
+
+
+def test_stop_refuses_to_erase_recorded_days(db):
+    rows = [{"id": 2, "day": "2026-10-14", "list_title": "Daily", "title": "Run", "is_completed": True}]
+    fake = db([_task(1, "Run", sort_order=1)], rows)
+    with pytest.raises(HTTPException) as e:
+        server.api_stop_task(1, server.StopTask(last_day="2026-10-13"))
+    assert e.value.status_code == 409
+    assert fake.tables["recurring_tasks"][0]["ends_on"] is None
+
+
+def test_bin_hides_and_restore_brings_back(db, monkeypatch):
+    fake = db([_task(1, "Run", sort_order=1), _task(2, "Floss", sort_order=2)])
+    server.api_bin_task(1)
+    defs = fake.tables["recurring_tasks"]
+    assert server._binned_titles(defs) == {"Run"}
+    assert [c["title"] for _s, _v, c in server._current_series(defs)] == ["Floss"]
+    server.api_restore_task(1)
+    assert server._binned_titles(fake.tables["recurring_tasks"]) == set()
+
+
+def test_permanent_delete_only_from_the_bin_and_only_without_history(db):
+    rows = [{"id": 1, "day": "2026-10-13", "list_title": "Daily", "title": "Run", "is_completed": True},
+            {"id": 2, "day": "2026-10-13", "list_title": "Daily", "title": "Typo", "is_completed": False}]
+    fake = db([_task(1, "Run", sort_order=1), _task(2, "Typo", sort_order=2, starts_on="2026-10-13")], rows)
+    with pytest.raises(HTTPException):
+        server.api_delete_task(2)                     # not in the bin yet
+    server.api_bin_task(1); server.api_bin_task(2)
+    with pytest.raises(HTTPException):
+        server.api_delete_task(1)                     # has a completion
+    out = server.api_delete_task(2)
+    assert out["blank_rows_removed"] == 1
+    assert {d["title"] for d in fake.tables["recurring_tasks"]} == {"Run"}
+    assert [r["title"] for r in fake.tables["task_history"]] == ["Run"]
+
+
+def test_day_read_judges_each_day_by_its_own_version_and_hides_the_bin(db, monkeypatch):
+    defs = [_task(1, "Run", sort_order=1, ends_on="2026-10-12"),
+            _task(5, "Run", sort_order=1, series_id=1, starts_on="2026-10-13", optional=True),
+            _task(2, "Typo", sort_order=2, deleted_at="2026-10-13T00:00:00Z")]
+    fake = db(defs)
+    from zoneinfo import ZoneInfo
+    monkeypatch.setattr(server, "_app_tz", lambda: ZoneInfo("America/Los_Angeles"))
+    monkeypatch.setattr(server, "_shape", lambda r: dict(r))
+    for day, optional in (("2026-10-12", False), ("2026-10-13", True)):
+        rows = [{"id": 1, "day": day, "list_title": "Daily", "title": "Run"},
+                {"id": 2, "day": day, "list_title": "Daily", "title": "Typo"}]
+        monkeypatch.setattr(server, "_day_rows", lambda client, d, rows=rows: rows)
+        out = server.api_day(day, Response(), fresh=True)
+        assert [(r["title"], r["optional"]) for r in out] == [("Run", optional)]
+
+
+def test_calendar_gets_optional_as_day_ranges(db):
+    db([_task(1, "Run", sort_order=1, ends_on="2026-10-12"),
+        _task(5, "Run", sort_order=1, series_id=1, starts_on="2026-10-13", optional=True)])
+    assert server._calendar_versions()["optional"] == {"Run": [["2026-10-13", None]]}
+
+
+def test_settings_page_lists_tasks_and_flags_the_migration(db, monkeypatch):
+    db([_task(1, "Run", sort_order=1), _task(2, "Typo", deleted_at="2026-10-13T00:00:00Z")])
+    html = server.page_tasks()
+    assert '"migrated":true' in html and '"title":"Run"' in html and '"binned":true' in html
     monkeypatch.setattr(server, "_definitions", lambda fresh=False: [_defn(1, "Run")])
     assert '"migrated":false' in server.page_tasks()
-    monkeypatch.setattr(server, "_definitions", lambda fresh=False:
-                        [_defn(1, "Run") | {"optional": True, "deadline_minutes": 1530}])
-    html = server.page_tasks()
-    assert '"migrated":true' in html and '"deadline_minutes":1530' in html
