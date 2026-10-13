@@ -741,9 +741,17 @@ def api_consistency() -> list[dict]:
     `optional` comes from the task's current definition: an unticked optional
     task is not a miss.
     """
-    optional = {d["title"] for d in _definitions() if d.get("optional")}
-    return [{**r, "optional": r["title"] in optional}
-            for r in _task_projection("day,list_title,title,is_completed")]
+    defs = _definitions()
+    hidden = _binned_titles(defs)
+    by_title = _versions_by_title([d for d in defs if _live(d)])
+    out = []
+    for r in _task_projection("day,list_title,title,is_completed"):
+        if r["title"] in hidden:
+            continue
+        versions = by_title.get(r["title"])
+        day = str(r["day"])[:10]
+        out.append({**r, "optional": bool(versions and _version_on(versions, day).get("optional"))})
+    return out
 
 
 @app.post("/api/refresh")
@@ -999,16 +1007,111 @@ def _deadline_at(day: str, minutes: int | None, tz) -> str | None:
     return local.replace(tzinfo=tz).astimezone(timezone.utc).isoformat()
 
 
+# --------------------------------------------------------------------------- #
+# Versions
+#
+# A task is a series of definition rows. Changing it from a day ends the row in
+# force the day before and starts a new one, so a past day is always judged by
+# the settings it actually had. Rows of one series share series_id; a null
+# series_id means the row's own id (every row from before versioning).
+# --------------------------------------------------------------------------- #
+def _sid(d: dict) -> int:
+    return d.get("series_id") or d["id"]
+
+
+def _live(d: dict) -> bool:
+    return not d.get("deleted_at")
+
+
+def _covers(d: dict, day: str) -> bool:
+    return ((not d.get("starts_on") or str(d["starts_on"]) <= day)
+            and (not d.get("ends_on") or str(d["ends_on"]) >= day))
+
+
+def _by_start(versions: list[dict]) -> list[dict]:
+    return sorted(versions, key=lambda v: (str(v.get("starts_on") or ""), v["id"]))
+
+
+def _version_on(versions: list[dict], day: str) -> dict:
+    """The version that governs `day`.
+
+    The one whose range covers it. A day before the first version -- history
+    from before the task was defined -- takes the first; a day after a stop or
+    in a gap takes the latest version that had started.
+    """
+    versions = _by_start(versions)
+    covering = [v for v in versions if _covers(v, day)]
+    if covering:
+        return covering[-1]
+    started = [v for v in versions if not v.get("starts_on") or str(v["starts_on"]) <= day]
+    return started[-1] if started else versions[0]
+
+
+def _series(defs: list[dict]) -> dict[int, list[dict]]:
+    out: dict[int, list[dict]] = {}
+    for d in defs:
+        out.setdefault(_sid(d), []).append(d)
+    return {k: _by_start(v) for k, v in out.items()}
+
+
+def _versions_by_title(defs: list[dict]) -> dict[str, list[dict]]:
+    """Title -> every version that carried it. Rows in task_history name a title."""
+    out: dict[str, list[dict]] = {}
+    for d in defs:
+        out.setdefault(d["title"], []).append(d)
+    return out
+
+
+def _binned_titles(defs: list[dict]) -> set[str]:
+    """Titles that belong only to tasks in the bin: hidden from every view."""
+    live = {d["title"] for d in defs if _live(d)}
+    return {d["title"] for d in defs if not _live(d)} - live
+
+
+def _today() -> str:
+    return datetime.now(_app_tz()).date().isoformat()
+
+
+def _current_series(defs: list[dict], today: str | None = None) -> list[tuple[int, list[dict], dict]]:
+    """Live active tasks as (series id, versions, version in force today), in page order."""
+    today = today or _today()
+    measurements = _measurement_titles()
+    out = []
+    for sid, versions in _series(defs).items():
+        if not all(_live(v) for v in versions) or not any(v.get("active") for v in versions):
+            continue
+        out.append((sid, versions, _version_on(versions, today)))
+    out.sort(key=lambda s: _definitions_order_key(s[2], measurements))
+    return out
+
+
+def _optional_ranges(versions: list[dict]) -> list[list[str | None]]:
+    """The day ranges in which this title was optional, as _version_on reads them."""
+    versions = _by_start(versions)
+    out = []
+    for i, v in enumerate(versions):
+        if not v.get("optional"):
+            continue
+        start = None if i == 0 else str(v["starts_on"])
+        end = None
+        if i + 1 < len(versions):
+            nxt = date.fromisoformat(str(versions[i + 1]["starts_on"]))
+            end = (nxt - timedelta(days=1)).isoformat()
+        out.append([start, end])
+    return out
+
+
 def _annotate(rows: list[dict], defs: list[dict], day: str) -> list[dict]:
-    """Copy each row with its definition's optional flag and deadline instant.
+    """Copy each row with the optional flag and deadline of the version in force that day.
 
     Copies: the non-fresh path hands in rows from the shared history cache.
     """
-    by_title = {d["title"]: d for d in defs}
+    by_title = _versions_by_title(defs)
     tz = _app_tz()
     out = []
     for r in rows:
-        d = by_title.get(r["title"]) or {}
+        versions = by_title.get(r["title"])
+        d = _version_on(versions, day) if versions else {}
         out.append({
             **r,
             "optional": bool(d.get("optional")),
@@ -1018,8 +1121,8 @@ def _annotate(rows: list[dict], defs: list[dict], day: str) -> list[dict]:
 
 
 def _recurring_defs() -> list[dict]:
-    """Active recurrence definitions -- what is due -- in page order."""
-    return [d for d in _definitions() if d.get("active")]
+    """Active, live recurrence definitions -- what can be due -- in page order."""
+    return [d for d in _definitions() if d.get("active") and _live(d)]
 
 
 @app.get("/api/day/{day}")
@@ -1035,14 +1138,19 @@ def api_day(day: str, response: Response, fresh: bool = False) -> list[dict]:
     """
     _check_day(day)
     defs = _definitions(fresh=fresh)
-    position = {d["title"]: i for i, d in enumerate(defs)}
+    live = [d for d in defs if _live(d)]
+    hidden = _binned_titles(defs)
+    position: dict[str, int] = {}
+    for i, d in enumerate(live):
+        position.setdefault(d["title"], i)
     if fresh:
         response.headers["Cache-Control"] = "no-store"
         rows = [_shape(r) for r in _day_rows(_sb(), day)]
     else:
         rows = [r for r in _task_history() if r["day"] == day]
+    rows = [r for r in rows if r["title"] not in hidden]
     rows.sort(key=lambda r: (position.get(r["title"], len(position)), r["title"]))
-    rows = _annotate(rows, defs, day)
+    rows = _annotate(rows, live, day)
 
     # Whether this day still needs materialising, so the page can skip the
     # ensure POST when it does not -- which is almost always. Free: the
@@ -1053,7 +1161,7 @@ def api_day(day: str, response: Response, fresh: bool = False) -> list[dict]:
     # known: with no definitions loaded the honest answer is "no idea", and a
     # missing header leaves the page doing what it does today.
     try:
-        active = [d for d in defs if d.get("active")]
+        active = [d for d in live if d.get("active")]
         if active:
             missing = _missing_recurrences(day, rows, active)
             response.headers["X-Day-Complete"] = "0" if missing else "1"
@@ -1083,83 +1191,371 @@ def api_task_order(body: TaskOrderBody) -> dict:
     """
     if len(set(body.titles)) != len(body.titles):
         raise HTTPException(400, "a task is listed twice")
-    active = [d for d in _definitions(fresh=True) if d.get("active")]
-    by_title = {d["title"]: d for d in active}
-    if len(by_title) != len(active):
-        # recurring_tasks is unique on (list_title, title), not title alone.
-        raise HTTPException(409, "two active tasks share a title; order by title is ambiguous")
+    current = _current_series(_definitions(fresh=True))
+    by_title = {cur["title"]: versions for _sid_, versions, cur in current}
+    if len(by_title) != len(current):
+        raise HTTPException(409, "two tasks share a title; order by title is ambiguous")
     listed = [title for title in body.titles if title in by_title]
     if not listed:
         raise HTTPException(400, "none of these titles is an active task")
-    order = listed + [d["title"] for d in active if d["title"] not in set(listed)]
+    order = listed + [cur["title"] for _s, _v, cur in current if cur["title"] not in set(listed)]
 
-    client = _sb()
-    changed = 0
-    for position, title in enumerate(order, 1):
-        d = by_title[title]
-        if d.get("sort_order") != position:
-            client.table("recurring_tasks").update({"sort_order": position}).eq(
-                "id", d["id"]).execute()
-            changed += 1
+    changed = sum(_set_position(by_title[title], position)
+                  for position, title in enumerate(order, 1))
     _cache.pop("definitions", None)
     return {"order": order, "changed": changed}
 
 
-class DefinitionSettings(BaseModel):
+def _set_position(versions: list[dict], position: int) -> int:
+    """Give every version of one task the same sort_order. Returns rows written."""
+    client = _sb()
+    written = 0
+    for v in versions:
+        if v.get("sort_order") != position:
+            client.table("recurring_tasks").update({"sort_order": position}).eq(
+                "id", v["id"]).execute()
+            written += 1
+    return written
+
+
+class TaskChange(BaseModel):
     optional: bool | None = None
     deadline_minutes: int | None = None
+    title: str | None = None
+    # The first day the change applies to; today if left out.
+    from_day: str | None = None
+    # Change every day instead, past included. Not for a rename: that would
+    # rewrite the names in the reconciled history.
+    all_days: bool = False
 
 
-def _freeze_order(active: list[dict]) -> None:
-    """Pin every active definition to its current position.
+class NewTask(BaseModel):
+    title: str
+    optional: bool = False
+    deadline_minutes: int | None = None
+    starts_on: str | None = None
+
+
+class StopTask(BaseModel):
+    last_day: str | None = None
+
+
+def _require_versioning(defs: list[dict]) -> None:
+    if defs and not all("series_id" in d and "deleted_at" in d for d in defs):
+        raise HTTPException(
+            409, "run sql/migrations/2026-10-13_versioned_definitions.sql first")
+
+
+def _clean_title(raw: str) -> str:
+    title = " ".join((raw or "").split())
+    if not title:
+        raise HTTPException(400, "a task needs a name")
+    if len(title) > 200:
+        raise HTTPException(400, "name longer than 200 characters")
+    return title
+
+
+def _title_taken(defs: list[dict], title: str, except_sid: int | None = None) -> bool:
+    """Is this name used by another task that is still in use (not binned)?"""
+    folded = title.casefold()
+    for sid, versions, cur in _current_series(defs):
+        if sid != except_sid and cur["title"].casefold() == folded:
+            return True
+    return folded in {m.casefold() for m in _measurement_titles()}
+
+
+def _check_deadline(minutes: int | None) -> None:
+    if minutes is not None and not 0 <= minutes <= 2879:
+        raise HTTPException(400, "deadline must be between 00:00 and 23:59 the next day")
+
+
+def _get_series(defs: list[dict], sid: int) -> list[dict]:
+    versions = _series(defs).get(sid)
+    if not versions:
+        raise HTTPException(404, f"no task {sid}")
+    return versions
+
+
+def _freeze_order(defs: list[dict]) -> None:
+    """Pin every task to its current position.
 
     The default order puts optional tasks last, so flipping one to optional
     would move it -- unless the order is already explicit. Writing the current
     positions first means the flip changes the colour and nothing else.
     """
-    client = _sb()
-    for position, d in enumerate(active, 1):
-        if d.get("sort_order") != position:
-            client.table("recurring_tasks").update({"sort_order": position}).eq(
-                "id", d["id"]).execute()
+    for position, (_sid_, versions, _cur) in enumerate(_current_series(defs), 1):
+        _set_position(versions, position)
 
 
-@app.post("/api/definitions/{def_id}")
-def api_definition_settings(def_id: int, body: DefinitionSettings) -> dict:
-    """Set whether a task is optional, and its deadline. Definitions only, no history.
+VERSION_FIELDS = ("list_title", "title", "active", "sort_order", "optional",
+                  "deadline_minutes", "created_at")
 
-    deadline_minutes counts from midnight of the task's day; 1440-2879 is the
-    following day. Send it as null to clear the deadline; leave it out to keep it.
+
+@app.post("/api/series/{sid}")
+def api_change_task(sid: int, body: TaskChange) -> dict:
+    """Change a task's optional flag, deadline or name, from a day onward.
+
+    From a day (today by default) the version in force ends the day before and
+    a new one starts, so earlier days keep the settings they had. On a day the
+    current version already starts, it is edited in place -- changing your mind
+    twice in one day leaves one version, not two. all_days edits every version
+    instead. A rename also renames that task's rows from the same day on, so
+    the day it takes effect does not show the task twice.
     """
-    sent = body.model_fields_set
+    sent = body.model_fields_set - {"from_day", "all_days"}
     if not sent:
         raise HTTPException(400, "nothing to change")
     if "optional" in sent and body.optional is None:
         raise HTTPException(400, "optional must be true or false")
-    if body.deadline_minutes is not None and not 0 <= body.deadline_minutes <= 2879:
-        raise HTTPException(400, "deadline must be between 00:00 and 23:59 the next day")
+    _check_deadline(body.deadline_minutes)
 
     defs = _definitions(fresh=True)
-    target = next((d for d in defs if d["id"] == def_id), None)
-    if target is None:
-        raise HTTPException(404, f"no task definition {def_id}")
-    if "optional" not in target or "deadline_minutes" not in target:
-        raise HTTPException(
-            409, "run sql/migrations/2026-10-12_optional_and_deadline.sql first")
-
-    if "optional" in sent and bool(target.get("optional")) != body.optional:
-        active = [d for d in defs if d.get("active")]
-        if any(not d.get("sort_order") for d in active):
-            _freeze_order(active)
+    _require_versioning(defs)
+    versions = _get_series(defs, sid)
+    if not all(_live(v) for v in versions):
+        raise HTTPException(409, "restore it from the bin first")
+    current = _version_on(versions, _today())
 
     changes = {k: getattr(body, k) for k in sent}
-    updated = (_sb().table("recurring_tasks").update(changes)
-               .eq("id", def_id).execute().data or [])
+    if "title" in changes:
+        if current["title"] in _measurement_titles():
+            raise HTTPException(400, "the measurement tasks can't be renamed")
+        if body.all_days:
+            raise HTTPException(
+                400, "a rename can't apply to past days: that would rewrite the names "
+                     "in the recorded history. It applies from a day onward.")
+        changes["title"] = _clean_title(body.title or "")
+        if _title_taken(defs, changes["title"], except_sid=sid):
+            raise HTTPException(409, f"another task is already called {changes['title']!r}")
+
+    if "optional" in changes and bool(current.get("optional")) != changes["optional"]:
+        if any(not d.get("sort_order") for d in defs if _live(d) and d.get("active")):
+            _freeze_order(defs)
+            defs = _definitions(fresh=True)
+            versions = _get_series(defs, sid)
+
+    client = _sb()
+    if body.all_days:
+        for v in versions:
+            client.table("recurring_tasks").update(changes).eq("id", v["id"]).execute()
+        _cache.pop("definitions", None)
+        return _task_summary(_get_series(_definitions(fresh=True), sid))
+
+    day = _check_writable(body.from_day or _today())
+    target = next((v for v in reversed(versions) if _covers(v, day)), None)
+    if target is None:
+        raise HTTPException(400, f"this task isn't scheduled on {day}")
+
+    if str(target.get("starts_on") or "") == day:
+        client.table("recurring_tasks").update(changes).eq("id", target["id"]).execute()
+    else:
+        before = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
+        new = {k: target.get(k) for k in VERSION_FIELDS}
+        new.update(changes)
+        new.update({"series_id": sid, "starts_on": day, "ends_on": target.get("ends_on")})
+        client.table("recurring_tasks").update({"ends_on": before}).eq("id", target["id"]).execute()
+        try:
+            client.table("recurring_tasks").insert(new).execute()
+        except Exception:
+            # Put the old version back as it was rather than leave a gap.
+            client.table("recurring_tasks").update({"ends_on": target.get("ends_on")}).eq(
+                "id", target["id"]).execute()
+            raise
+
+    if "title" in changes and changes["title"] != target["title"]:
+        renamed = (client.table("task_history").update({"title": changes["title"]})
+                   .eq("title", target["title"]).eq("list_title", target["list_title"])
+                   .filter("day", "gte", day).execute().data or [])
+        _cache_apply(renamed)
+
     _cache.pop("definitions", None)
-    if not updated:
-        raise HTTPException(404, f"no task definition {def_id}")
-    row = updated[0]
-    return {k: row.get(k) for k in ("id", "title", "optional", "deadline_minutes")}
+    return _task_summary(_get_series(_definitions(fresh=True), sid))
+
+
+def _task_summary(versions: list[dict]) -> dict:
+    cur = _version_on(versions, _today())
+    last = versions[-1]
+    return {
+        "id": _sid(cur),
+        "title": cur["title"],
+        "optional": bool(cur.get("optional")),
+        "deadline_minutes": cur.get("deadline_minutes"),
+        "starts_on": str(versions[0].get("starts_on") or "") or None,
+        "ends_on": str(last.get("ends_on") or "") or None,
+        "binned": not all(_live(v) for v in versions),
+        "measurement": cur["title"] in _measurement_titles(),
+        "versions": len(versions),
+    }
+
+
+@app.post("/api/series")
+def api_add_task(body: NewTask) -> dict:
+    """Add a daily task. It goes to the end of the order and starts today unless told otherwise."""
+    defs = _definitions(fresh=True)
+    _require_versioning(defs)
+    title = _clean_title(body.title)
+    if _title_taken(defs, title):
+        raise HTTPException(409, f"a task is already called {title!r}")
+    _check_deadline(body.deadline_minutes)
+    starts = _check_writable(body.starts_on or _today())
+
+    current = _current_series(defs)
+    explicit = [cur.get("sort_order") or 0 for _s, _v, cur in current]
+    sort_order = (max(explicit) + 1) if any(explicit) else 0
+
+    created = _sb().table("recurring_tasks").insert({
+        "list_title": "Daily", "title": title, "active": True,
+        "sort_order": sort_order, "starts_on": starts,
+        "optional": body.optional, "deadline_minutes": body.deadline_minutes,
+    }).execute().data or []
+    _cache.pop("definitions", None)
+    if not created:
+        raise HTTPException(500, "insert returned nothing")
+    return _task_summary([created[0]])
+
+
+def _titles_of(versions: list[dict]) -> set[tuple[str, str]]:
+    return {(v["list_title"], v["title"]) for v in versions}
+
+
+def _rows_carrying_data(rows: list[dict]) -> list[dict]:
+    return [r for r in rows if r.get("is_completed") or r.get("weight_lbs") is not None
+            or r.get("takeout_weight") is not None or (r.get("notes") or "").strip()]
+
+
+@app.post("/api/series/{sid}/stop")
+def api_stop_task(sid: int, body: StopTask) -> dict:
+    """Stop a task after a last day. Its history stays.
+
+    The blank rows already made for days after it -- a task is materialised a
+    day at a time, sometimes ahead -- are removed, or they would read as misses.
+    Refused if any of those days has something recorded on it.
+    """
+    defs = _definitions(fresh=True)
+    _require_versioning(defs)
+    versions = _get_series(defs, sid)
+    last_day = body.last_day or _today()
+    _check_day(last_day)
+    after = (date.fromisoformat(last_day) + timedelta(days=1)).isoformat()
+    _check_writable(after)
+    first = str(versions[0].get("starts_on") or "")
+    if first and last_day < first:
+        raise HTTPException(400, "it hasn't started by then; move it to the bin instead")
+
+    client = _sb()
+    doomed = []
+    for list_title, title in _titles_of(versions):
+        doomed += (client.table("task_history").select("*").eq("title", title)
+                   .eq("list_title", list_title).filter("day", "gte", after).execute().data or [])
+    kept = _rows_carrying_data(doomed)
+    if kept:
+        days = ", ".join(sorted({str(r["day"])[:10] for r in kept}))
+        raise HTTPException(409, f"it has something recorded after {last_day} ({days}); "
+                                 "pick a later last day")
+
+    for v in versions:
+        start = str(v.get("starts_on") or "")
+        if start and start > last_day:
+            client.table("recurring_tasks").delete().eq("id", v["id"]).execute()
+        elif not v.get("ends_on") or str(v["ends_on"]) > last_day:
+            client.table("recurring_tasks").update({"ends_on": last_day}).eq("id", v["id"]).execute()
+    for r in doomed:
+        client.table("task_history").delete().eq("id", r["id"]).execute()
+    _cache.pop("definitions", None)
+    _cache.pop("task_history", None)
+    return {**_task_summary(_get_series(_definitions(fresh=True), sid)),
+            "blank_rows_removed": len(doomed)}
+
+
+@app.post("/api/series/{sid}/resume")
+def api_resume_task(sid: int) -> dict:
+    """Undo a stop: the latest version runs on again with no end."""
+    defs = _definitions(fresh=True)
+    _require_versioning(defs)
+    versions = _get_series(defs, sid)
+    _sb().table("recurring_tasks").update({"ends_on": None}).eq("id", versions[-1]["id"]).execute()
+    _cache.pop("definitions", None)
+    return _task_summary(_get_series(_definitions(fresh=True), sid))
+
+
+def _set_binned(sid: int, binned: bool) -> dict:
+    defs = _definitions(fresh=True)
+    _require_versioning(defs)
+    versions = _get_series(defs, sid)
+    if binned and _version_on(versions, _today())["title"] in _measurement_titles():
+        raise HTTPException(400, "the measurement tasks can't be deleted; stop one instead")
+    if not binned:
+        cur = _version_on(versions, _today())
+        if _title_taken(defs, cur["title"], except_sid=sid):
+            raise HTTPException(409, f"another task is now called {cur['title']!r}; "
+                                     "rename that one first")
+    stamp = datetime.now(timezone.utc).isoformat() if binned else None
+    client = _sb()
+    for v in versions:
+        client.table("recurring_tasks").update({"deleted_at": stamp}).eq("id", v["id"]).execute()
+    _cache.pop("definitions", None)
+    return _task_summary(_get_series(_definitions(fresh=True), sid))
+
+
+@app.post("/api/series/{sid}/bin")
+def api_bin_task(sid: int) -> dict:
+    """Move a task to the bin: hidden everywhere, nothing erased, restorable."""
+    return _set_binned(sid, True)
+
+
+@app.post("/api/series/{sid}/restore")
+def api_restore_task(sid: int) -> dict:
+    return _set_binned(sid, False)
+
+
+def _deletable(versions: list[dict], defs: list[dict]) -> tuple[bool, str]:
+    """Can a binned task be erased? Only if nothing was ever recorded against it."""
+    others = {d["title"] for d in defs if _sid(d) != _sid(versions[0])}
+    client = _sb()
+    for list_title, title in _titles_of(versions):
+        if title in others:
+            return False, f"its name is shared with another task ({title!r})"
+        done = (client.table("task_history").select("id").eq("title", title)
+                .eq("is_completed", True).limit(1).execute().data or [])
+        if done:
+            return False, "it has completions recorded; it can stay in the bin"
+        old = (client.table("task_history").select("id").eq("title", title)
+               .lt("day", WRITE_FLOOR.isoformat()).limit(1).execute().data or [])
+        if old:
+            return False, "it has rows in the protected history"
+    return True, ""
+
+
+@app.delete("/api/series/{sid}")
+def api_delete_task(sid: int) -> dict:
+    """Erase a binned task that never had anything recorded. Not reversible.
+
+    Only from the bin, and only when no completion exists for it and it has no
+    rows below the write floor. Its blank rows go with it.
+    """
+    defs = _definitions(fresh=True)
+    _require_versioning(defs)
+    versions = _get_series(defs, sid)
+    if all(_live(v) for v in versions):
+        raise HTTPException(409, "move it to the bin first")
+    ok, why = _deletable(versions, defs)
+    if not ok:
+        raise HTTPException(409, f"can't delete permanently: {why}")
+
+    client = _sb()
+    rows = []
+    for list_title, title in _titles_of(versions):
+        rows += (client.table("task_history").select("*").eq("title", title)
+                 .eq("list_title", list_title).execute().data or [])
+    if _rows_carrying_data(rows):
+        raise HTTPException(409, "can't delete permanently: something was recorded against it")
+    for r in rows:
+        client.table("task_history").delete().eq("id", r["id"]).execute()
+    for v in versions:
+        client.table("recurring_tasks").delete().eq("id", v["id"]).execute()
+    _cache.pop("definitions", None)
+    _cache.pop("task_history", None)
+    return {"id": sid, "deleted": True, "blank_rows_removed": len(rows)}
 
 
 @app.post("/api/task/{task_id}/completed_at")
@@ -1340,21 +1736,42 @@ def page_today(day: str | None = None) -> str:
 def page_calendar() -> str:
     return _render("calendar_view.html", {
         "mode": "live", "endpoint": "/api/task_history", "paged": False,
-        "optional": sorted(d["title"] for d in _definitions() if d.get("optional")),
+        **_calendar_versions(),
     }, active="/calendar")
+
+
+def _calendar_versions() -> dict:
+    """What the calendar needs to judge each day: optional ranges and hidden titles."""
+    defs = _definitions()
+    live = [d for d in defs if _live(d)]
+    ranges = {title: _optional_ranges(vs) for title, vs in _versions_by_title(live).items()}
+    return {"optional": {t: r for t, r in ranges.items() if r},
+            "hidden": sorted(_binned_titles(defs))}
 
 
 @app.get("/tasks", response_class=HTMLResponse)
 def page_tasks() -> str:
     """Per-task settings: optional or required, and a deadline."""
-    defs = [d for d in _definitions(fresh=True) if d.get("active")]
-    migrated = all("optional" in d and "deadline_minutes" in d for d in defs)
+    defs = _definitions(fresh=True)
+    migrated = all("series_id" in d and "deleted_at" in d and "optional" in d for d in defs)
+    today = _today()
+    measurements = _measurement_titles()
+    tasks = []
+    for sid, versions in _series(defs).items():
+        if not any(v.get("active") for v in versions):
+            continue
+        summary = _task_summary(versions)
+        summary["stopped"] = bool(summary["ends_on"] and summary["ends_on"] < today)
+        if summary["binned"]:
+            summary["deletable"], summary["why_not"] = _deletable(versions, defs)
+        tasks.append((_definitions_order_key(_version_on(versions, today), measurements), summary))
+    tasks.sort(key=lambda x: x[0])
     return _render("tasks.html", {
         "mode": "inline",
         "migrated": migrated,
-        "defs": [{"id": d["id"], "title": d["title"],
-                  "optional": bool(d.get("optional")),
-                  "deadline_minutes": d.get("deadline_minutes")} for d in defs],
+        "today": today,
+        "floor": WRITE_FLOOR.isoformat(),
+        "tasks": [s for _k, s in tasks],
     }, active="/tasks")
 
 

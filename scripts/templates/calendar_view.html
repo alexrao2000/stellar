@@ -231,8 +231,17 @@ footer.foot b { color: var(--ink); font-weight: 600; }
 <script>
 (function () {
   var BOOT = JSON.parse(document.getElementById('bootstrap').textContent);
-  var OPTIONAL = {};
-  (BOOT.optional || []).forEach(function (t) { OPTIONAL[t] = true; });
+  /* Optional is per day: a task made optional from some day keeps its earlier
+     days required. BOOT.optional maps a title to [from, to] ranges, either end
+     open (null). Binned tasks are hidden altogether. */
+  var OPTIONAL = BOOT.optional || {};
+  var HIDDEN = {};
+  (BOOT.hidden || []).forEach(function (t) { HIDDEN[t] = true; });
+  function isOptional(title, day) {
+    return (OPTIONAL[title] || []).some(function (r) {
+      return (!r[0] || r[0] <= day) && (!r[1] || r[1] >= day);
+    });
+  }
   var TITLES, NOTES, LISTS, ROWS;
 
   /* Interning happens at build time for an inlined snapshot; in live mode the
@@ -361,7 +370,7 @@ footer.foot b { color: var(--ink); font-weight: 600; }
   state.start = mondayOf(Math.min(Math.max(todayT, parseDay(minDay)), parseDay(maxDay)));
 
   function visibleRows(day) {
-    var idxs = byDay.get(day) || [];
+    var idxs = (byDay.get(day) || []).filter(function (i) { return !HIDDEN[TITLES[ROWS[i][1]]]; });
     if (state.dailyOnly) idxs = idxs.filter(function (i) { return LISTS[ROWS[i][2]] === 'Daily'; });
     return idxs.slice().sort(function (a, b) {
       return TITLES[ROWS[a][1]].localeCompare(TITLES[ROWS[b][1]]);
@@ -385,7 +394,7 @@ footer.foot b { color: var(--ink); font-weight: 600; }
 
       var nDone = rows.filter(function (i) { return ROWS[i][3]; }).length;
       /* An unticked optional task is neither done nor owed. */
-      var owed = rows.filter(function (i) { return ROWS[i][3] || !OPTIONAL[TITLES[ROWS[i][1]]]; }).length;
+      var owed = rows.filter(function (i) { return ROWS[i][3] || !isOptional(TITLES[ROWS[i][1]], ROWS[i][0]); }).length;
       done += nDone; total += owed;
 
       var head =
@@ -414,7 +423,7 @@ footer.foot b { color: var(--ink); font-weight: 600; }
 
   function tile(i) {
     var r = ROWS[i];
-    var cls = r[3] ? 'done' : 'todo' + (OPTIONAL[TITLES[r[1]]] ? ' optional' : '');
+    var cls = r[3] ? 'done' : 'todo' + (isOptional(TITLES[r[1]], r[0]) ? ' optional' : '');
     var w = '';
     if (r[7] === 1) w = '<span class="w">' + r[6].toFixed(1) + '</span>';
     else if (r[7] === 2) w = '<span class="w nr">not rec.</span>';
