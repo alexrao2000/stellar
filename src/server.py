@@ -382,8 +382,7 @@ def favicon() -> Response:
 # The one definition of the nav. It used to be copied into all five templates,
 # which is how /docs ended up linked from the check-in page and nowhere else.
 NAV_ITEMS = (
-    ("/", "Today"),
-    ("/calendar", "Calendar"),
+    ("/", "Tasks"),
     ("/weight", "Weight"),
     ("/wake", "Wake"),
     ("/consistency", "Consistency"),
@@ -743,9 +742,25 @@ def api_consistency() -> list[dict]:
     """
     defs = _definitions()
     hidden = _binned_titles(defs)
-    by_title = _versions_by_title([d for d in defs if _live(d)])
+    live = [d for d in defs if _live(d)]
+    by_title = _versions_by_title(live)
+    rows = _task_projection("day,list_title,title,is_completed")
+    # Days are no longer filled in by viewing them, so a day never opened has no
+    # rows. Its scheduled tasks are still owed: add them, from the first day a
+    # definition starts through today, wherever a row is missing.
+    starts = [str(d["starts_on"]) for d in live if d.get("starts_on")]
+    if starts:
+        have: dict[str, list[dict]] = {}
+        for r in rows:
+            have.setdefault(str(r["day"])[:10], []).append(r)
+        d0, d1 = date.fromisoformat(min(starts)), date.fromisoformat(_today())
+        for i in range(max(0, (d1 - d0).days + 1)):
+            day = (d0 + timedelta(days=i)).isoformat()
+            for v in _scheduled(day, have.get(day, []), live):
+                rows.append({"day": day, "list_title": v["list_title"],
+                             "title": v["title"], "is_completed": False})
     out = []
-    for r in _task_projection("day,list_title,title,is_completed"):
+    for r in rows:
         if r["title"] in hidden:
             continue
         versions = by_title.get(r["title"])
@@ -1120,6 +1135,52 @@ def _annotate(rows: list[dict], defs: list[dict], day: str) -> list[dict]:
     return out
 
 
+def _scheduled(day: str, rows: list[dict], live: list[dict]) -> list[dict]:
+    """Placeholders for every task due on `day` that has no row yet.
+
+    A day shows what is scheduled without anything being written: a row is made
+    only when something is recorded. id is None and `virtual` marks them; to the
+    pages they are an unticked task.
+    """
+    present = {(r["list_title"], r["title"]) for r in rows}
+    out, seen = [], set()
+    for d in live:
+        key = (d["list_title"], d["title"])
+        if not d.get("active") or key in present or key in seen or not _covers(d, day):
+            continue
+        seen.add(key)
+        out.append({"id": None, "virtual": True, "day": day, "list_title": d["list_title"],
+                    "title": d["title"], "is_completed": False, "completed_at": None,
+                    "notes": None, "weight_lbs": None, "weight_source": None,
+                    "takeout_weight": None})
+    return out
+
+
+def _check_not_future(day: str) -> None:
+    if day > _today():
+        raise HTTPException(400, f"{day} hasn't happened yet")
+
+
+def _materialize(day: str, title: str) -> dict:
+    """The row for one task on one day, made if it doesn't exist yet. Only that one."""
+    client = _sb()
+    rows = [r for r in _day_rows(client, day) if r["title"] == title]
+    if rows:
+        return rows[0]
+    live = [d for d in _definitions(fresh=True) if _live(d)]
+    due = next((d for d in _scheduled(day, [], live) if d["title"] == title), None)
+    if due is None:
+        raise HTTPException(404, f"{title!r} isn't scheduled on {day}")
+    created = client.table("task_history").insert({
+        "day": day, "list_title": due["list_title"], "title": title,
+        "status": "needsAction", "is_completed": False,
+    }).execute().data or []
+    if not created:
+        raise HTTPException(500, "insert returned nothing")
+    _cache_apply(created)
+    return created[0]
+
+
 def _recurring_defs() -> list[dict]:
     """Active, live recurrence definitions -- what can be due -- in page order."""
     return [d for d in _definitions() if d.get("active") and _live(d)]
@@ -1149,6 +1210,7 @@ def api_day(day: str, response: Response, fresh: bool = False) -> list[dict]:
     else:
         rows = [r for r in _task_history() if r["day"] == day]
     rows = [r for r in rows if r["title"] not in hidden]
+    rows = rows + _scheduled(day, rows, live)
     rows.sort(key=lambda r: (position.get(r["title"], len(position)), r["title"]))
     rows = _annotate(rows, live, day)
 
@@ -1170,6 +1232,70 @@ def api_day(day: str, response: Response, fresh: bool = False) -> list[dict]:
         log.warning("completeness check failed for %s (%s)", day, exc)
 
     return rows
+
+
+RANGE_MAX_DAYS = 62
+
+
+@app.get("/api/range")
+def api_range(start: str, end: str, response: Response) -> dict:
+    """Every day from start to end inclusive, each as /api/day would return it.
+
+    One query for the rows, so a week or a month costs the same round trip as a
+    day. Days with nothing recorded still list what was scheduled.
+    """
+    _check_day(start)
+    _check_day(end)
+    d0, d1 = date.fromisoformat(start), date.fromisoformat(end)
+    if d1 < d0:
+        raise HTTPException(400, "end is before start")
+    if (d1 - d0).days >= RANGE_MAX_DAYS:
+        raise HTTPException(400, f"at most {RANGE_MAX_DAYS} days at a time")
+    response.headers["Cache-Control"] = "no-store"
+
+    defs = _definitions(fresh=True)
+    live = [d for d in defs if _live(d)]
+    hidden = _binned_titles(defs)
+    position: dict[str, int] = {}
+    for i, d in enumerate(live):
+        position.setdefault(d["title"], i)
+
+    raw = (_sb().table("task_history").select("*")
+           .filter("day", "gte", start).filter("day", "lte", end).execute().data or [])
+    by_day: dict[str, list[dict]] = {}
+    for r in raw:
+        rec = _shape(r)
+        if rec["title"] not in hidden:
+            by_day.setdefault(rec["day"], []).append(rec)
+
+    days = {}
+    for i in range((d1 - d0).days + 1):
+        day = (d0 + timedelta(days=i)).isoformat()
+        rows = by_day.get(day, [])
+        rows = rows + _scheduled(day, rows, live)
+        rows.sort(key=lambda r: (position.get(r["title"], len(position)), r["title"]))
+        days[day] = _annotate(rows, live, day)
+    return {"start": start, "end": end, "today": _today(), "floor": WRITE_FLOOR.isoformat(),
+            "days": days}
+
+
+@app.post("/api/day/{day}/check")
+def api_check(day: str, title: str, done: bool) -> dict:
+    """Tick or untick a task on a day, making its row first if it has none.
+
+    The page addresses a scheduled task by title, since it has no row -- and so
+    no id -- until something is recorded. Not for a day that hasn't happened.
+    """
+    _check_writable(day)
+    _check_not_future(day)
+    row = _materialize(day, title)
+    res = _sb().table("task_history").update({
+        "is_completed": done,
+        "status": "completed" if done else "needsAction",
+        "completed_at": datetime.now(timezone.utc).isoformat() if done else None,
+    }).eq("id", row["id"]).execute()
+    _cache_apply(res.data or [])
+    return res.data[0] if res.data else row
 
 
 class TaskOrderBody(BaseModel):
@@ -1627,16 +1753,10 @@ def api_set_weight(day: str, lbs: float) -> dict:
             400, f"{lbs} lbs is outside {WEIGHT_MIN}-{WEIGHT_MAX}; refusing as a typo."
         )
     client = _sb()
-    rows = [r for r in _day_rows(client, day) if r["title"] == "Weigh yourself"]
-    if not rows:
-        # The page materialises today's recurring rows asynchronously. A user
-        # can enter a weight before that request finishes, so make the write
-        # self-sufficient and retry the day-scoped lookup once.
-        api_ensure_day(day)
-        rows = [r for r in _day_rows(client, day) if r["title"] == "Weigh yourself"]
-    if not rows:
-        raise HTTPException(404, f"no 'Weigh yourself' row for {day} -- ensure the day first.")
-    row = rows[0]
+    _check_not_future(day)
+    # A day's rows are made only when something is recorded, so this may be
+    # the first: make the one row this needs, and nothing else.
+    row = _materialize(day, "Weigh yourself")
     previous_rows = (
         client.table("task_history")
         .select("day,weight_lbs")
@@ -1682,11 +1802,9 @@ def api_set_wake(day: str, time: str) -> dict:
     suffix = "am" if hour < 12 else "pm"
     display = f"{(hour % 12) or 12}:{minute:02d} {suffix}"
 
+    _check_not_future(day)
     client = _sb()
-    rows = [r for r in _day_rows(client, day) if r["title"] == "Wake Up"]
-    if not rows:
-        raise HTTPException(404, f"no 'Wake Up' row for {day} -- ensure the day first.")
-    row = rows[0]
+    row = _materialize(day, "Wake Up")
 
     res = client.table("task_history").update({
         "notes": f"Wake-up Time: {display}",
@@ -1701,15 +1819,24 @@ def api_set_wake(day: str, time: str) -> dict:
 # --------------------------------------------------------------------------- #
 # Pages
 # --------------------------------------------------------------------------- #
+VIEWS = ("day", "3days", "week", "month", "custom")
+
+
 @app.get("/", response_class=HTMLResponse)
 @app.get("/today", response_class=HTMLResponse)
-def page_today(day: str | None = None) -> str:
-    """The daily check-in, and the app's front door.
+def page_today(day: str | None = None, view: str = "day",
+               start: str | None = None, end: str | None = None) -> str:
+    """The Tasks tab, and the app's front door.
 
-    Served at both / and /today. Recording the day is the thing done every
-    day; the calendar and charts are for looking back, so they sit one click
-    away rather than in the way.
+    Served at both / and /today. One day by default -- recording the day is the
+    thing done every day -- or a range of days (3 days, a week, a month, custom)
+    chosen on the page, which replaced the separate calendar.
     """
+    if view not in VIEWS:
+        view = "day"
+    for d in (start, end):
+        if d:
+            _check_day(d)
     from zoneinfo import ZoneInfo
 
     from .timezones import resolve_timezone
@@ -1729,15 +1856,17 @@ def page_today(day: str | None = None) -> str:
         "today": today,
         "writable": date.fromisoformat(day) >= WRITE_FLOOR,
         "floor": WRITE_FLOOR.isoformat(),
+        "view": view,
+        "start": start,
+        "end": end,
+        "rangeMax": RANGE_MAX_DAYS,
     }, active="/")
 
 
-@app.get("/calendar", response_class=HTMLResponse)
-def page_calendar() -> str:
-    return _render("calendar_view.html", {
-        "mode": "live", "endpoint": "/api/task_history", "paged": False,
-        **_calendar_versions(),
-    }, active="/calendar")
+@app.get("/calendar")
+def page_calendar() -> RedirectResponse:
+    """The calendar is a view of the Tasks tab now; old links land on its week view."""
+    return RedirectResponse("/?view=week", status_code=308)
 
 
 def _calendar_versions() -> dict:
