@@ -417,6 +417,14 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
      than fetched -- which is what lets a day change stay client-side. */
   function writable(day) { return day >= BOOT.floor; }
 
+  /* Today, kept current. The page used to fix it at load, so a tab left open
+     overnight treated the new day as one that hadn't happened and locked it.
+     Read in the app's timezone, not the browser's, to agree with the server. */
+  function todayNow() {
+    try { return new Date().toLocaleDateString('en-CA', { timeZone: BOOT.tz }); }
+    catch (e) { return BOOT.today; }
+  }
+
   function paintHeader(day) {
     var q = parts(day);
     var dd = new Date(Date.UTC(q[0], q[1] - 1, q[2]));
@@ -533,13 +541,13 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     paintHeader(day);
     if (!opts.pop) {
       history[opts.replace ? 'replaceState' : 'pushState'](
-        { view: 'day', day: day }, '', '/?day=' + day);
+        { view: 'day', day: day }, '', day === todayNow() ? '/' : '/?day=' + day);
     }
 
     var ro = !writable(day);
     document.body.classList.toggle('read-only', ro);
     ['weight', 'wake'].forEach(function (id) {
-      document.getElementById(id).disabled = ro || day > BOOT.today;
+      document.getElementById(id).disabled = ro || day > todayNow();
     });
     say(ro ? 'Read-only: ' + day + ' is before ' + BOOT.floor +
              ', the reconciled history.' : '');
@@ -598,7 +606,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     if (e.target.value) go(VIEW, e.target.value);
   });
   document.getElementById('go-today').addEventListener('click', function () {
-    go(VIEW, BOOT.today);
+    go(VIEW, todayNow());
   });
   ['range-start', 'range-end'].forEach(function (id) {
     document.getElementById(id).addEventListener('change', function () {
@@ -769,7 +777,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
       b.className = 'task' + (r.is_completed ? ' done' : '');
       b.innerHTML = '<span class="box"></span><span class="ttl">' + esc(r.title) +
         '</span><span class="due"></span>';
-      if (!writable(r.day) || r.day > BOOT.today) {
+      if (!writable(r.day) || r.day > todayNow()) {
         b.disabled = true;
         b.style.cursor = 'default';
         b.style.opacity = '1';
@@ -903,8 +911,8 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     var b = document.createElement('button');
     b.type = 'button';
     b.innerHTML = 'Completed ' + esc(label) +
-      (BOOT.writable && writable(r.day) ? '<span class="pen" aria-hidden="true">&#9998;</span>' : '');
-    b.title = BOOT.writable && writable(r.day) ? 'Correct when this was done' : '';
+      (writable(r.day) ? '<span class="pen" aria-hidden="true">&#9998;</span>' : '');
+    b.title = writable(r.day) ? 'Correct when this was done' : '';
     b.addEventListener('click', function (e) {
       e.stopPropagation();
       if (writable(r.day)) editWhen(item, pill);
@@ -1400,6 +1408,20 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     });
     return el;
   }
+
+  var shownToday = todayNow();
+  function rollover() {
+    var t = todayNow();
+    if (t === shownToday) return;
+    var was = shownToday;
+    shownToday = t;
+    BOOT.today = t;
+    var wasOnToday = VIEW === 'day' ? DAY === was : rangeOf(VIEW, DAY)[0] <= was && was <= rangeOf(VIEW, DAY)[1];
+    go(VIEW, wasOnToday ? t : DAY, { replace: true });
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) rollover(); });
+  window.addEventListener('focus', rollover);
+  setInterval(rollover, 60000);
 
   go(VIEW, DAY, { replace: true });
 })();
