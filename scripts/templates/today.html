@@ -333,6 +333,10 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
 #status.ok { color: var(--ok); }
 #status.bad { color: var(--bad); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+/* A day switch is one paint. The fade is feedback for a tap; on a switch it
+   made the long-lived measurement tiles trail the task tiles, which are
+   rebuilt and so change at once. */
+body.painting .task, body.painting .field, body.painting .field input { transition: none !important; }
 </style>
 
 <div class="wrap">
@@ -577,10 +581,33 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
     });
   }
 
+  /* Three days either side, in one live request, so the next day is already
+     here -- and correct -- when you step to it. Only days not yet held are
+     asked for; a day already shown has had its own live read. */
+  var PREFETCH = 3, prefetching = null;
   function prefetchAdjacent(day) {
-    [shiftDay(day, -1), shiftDay(day, 1)].forEach(function (d) {
-      if (!CACHE[d]) fetchDay(d, false);
-    });
+    var want = [];
+    for (var i = -PREFETCH; i <= PREFETCH; i++) {
+      var d = shiftDay(day, i);
+      if (i && !CACHE[d]) want.push(d);
+    }
+    if (!want.length || prefetching) return;
+    var start = want[0], end = want[want.length - 1];
+    var versions = {};
+    want.forEach(function (d) { versions[d] = requestVersion[d] || 0; });
+    prefetching = fetch('/api/range?start=' + start + '&end=' + end, { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data) return;
+        Object.keys(data.days).forEach(function (d) {
+          /* Never overwrite a day read live, or changed here, since this left. */
+          if (CACHE[d] || (requestVersion[d] || 0) !== (versions[d] || 0)) return;
+          CACHE[d] = data.days[d];
+          storeWrite(d, data.days[d]);
+        });
+      })
+      .catch(function () { /* the day's own live read covers it */ })
+      .then(function () { prefetching = null; });
   }
 
   /* ---- views ---------------------------------------------------------------
@@ -716,6 +743,10 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--todo-bg); o
   });
 
   function render(rows) {
+    document.body.classList.add('painting');
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { document.body.classList.remove('painting'); });
+    });
     var host = document.getElementById('tasks');
     /* Drop the last day's task entries. The two measurement entries are
        permanent nodes and stay put: removing one would blur a field being
