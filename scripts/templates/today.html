@@ -54,7 +54,9 @@ html, body {
 /* A range needs the width; one day reads best narrow. */
 body.ranged .wrap { max-width: 1500px; }
 /* The board takes the width; the controls above it keep the one-day width. */
-body.ranged header > :not(.eyebrow):not(h1) { max-width: 560px; }
+/* The header is the same centred column in every view; only the board
+   below it takes the full width. */
+body.ranged header { max-width: 560px; margin-left: auto; margin-right: auto; }
 body.ranged #day-card { display: none; }
 body:not(.ranged) #board { display: none; }
 
@@ -1266,15 +1268,23 @@ body.painting .task, body.painting .field, body.painting .field input { transiti
         { view: view, day: day, start: CUSTOM.start, end: CUSTOM.end }, '', urlFor(view, day));
     }
     say('');
-    return loadRange(r[0], r[1]);
+    return showRange(r[0], r[1]);
   }
 
-  var RANGE = null, rangeSeq = 0;
+  /* Ranges share the day view's per-day cache. A range paints at once from
+     what is held, is confirmed by one live read behind the paint -- redrawn
+     only if that read disagrees -- and the ranges either side are fetched
+     ahead, so stepping back and forth never waits on the network. */
+  var SHOWN = null, rangeSeq = 0;
 
-  /* `background` is the periodic re-read: it must never redraw under someone
-     typing. A range you asked for always draws. */
-  function loadRange(start, end, background) {
-    var seq = ++rangeSeq;
+  function daysIn(start, end) {
+    var out = [];
+    for (var d = start; d <= end; d = shiftDay(d, 1)) out.push(d);
+    return out;
+  }
+  function held(days) { return days.every(function (d) { return CACHE[d]; }); }
+
+  function fetchRange(start, end) {
     return fetch('/api/range?start=' + start + '&end=' + end, { cache: 'no-store' })
       .then(function (res) {
         return res.json().then(function (j) {
@@ -1283,27 +1293,71 @@ body.painting .task, body.painting .field, body.painting .field input { transiti
         });
       })
       .then(function (data) {
+        Object.keys(data.days).forEach(function (d) {
+          requestVersion[d] = (requestVersion[d] || 0) + 1;
+          CACHE[d] = data.days[d];
+          storeWrite(d, data.days[d]);
+        });
+        return data;
+      });
+  }
+
+  function snapshot(days) { return JSON.stringify(days.map(function (d) { return CACHE[d] || null; })); }
+
+  function showRange(start, end) {
+    var seq = ++rangeSeq, days = daysIn(start, end);
+    days.forEach(function (d) { if (!CACHE[d]) { var s = storeRead(d); if (s) CACHE[d] = s; } });
+    var painted = null;
+    if (held(days)) { renderBoard(days); painted = snapshot(days); }
+    return loadRange(start, end, false, seq, painted).then(function () {
+      if (seq === rangeSeq) prefetchRanges();
+    });
+  }
+
+  /* `background` is the periodic re-read: it must never redraw under someone
+     typing. A range you asked for always draws. */
+  function loadRange(start, end, background, seq, painted) {
+    seq = seq || ++rangeSeq;
+    var days = daysIn(start, end);
+    if (painted === undefined) painted = SHOWN && SHOWN.join() === days.join() ? snapshot(days) : null;
+    return fetchRange(start, end)
+      .then(function () {
         if (seq !== rangeSeq) return;              // a newer range was asked for
         var board = document.getElementById('board');
         if (background && board.contains(document.activeElement) &&
             document.activeElement.tagName === 'INPUT') return;
-        RANGE = data;
-        renderBoard();
+        if (painted !== snapshot(days)) renderBoard(days);
       })
       .catch(function (e) { if (seq === rangeSeq) say('Could not load: ' + e.message, true); });
+  }
+
+  /* The range before and after this one, fetched ahead -- only the days not
+     already held, each side in one request. */
+  function prefetchRanges() {
+    [-1, 1].forEach(function (dir) {
+      var r;
+      if (VIEW === 'month') r = rangeOf('month', addMonths(DAY, dir));
+      else if (VIEW === 'custom') {
+        var span = daysBetween(CUSTOM.start, CUSTOM.end) + 1;
+        r = [shiftDay(CUSTOM.start, dir * span), shiftDay(CUSTOM.end, dir * span)];
+      } else r = rangeOf(VIEW, shiftDay(DAY, dir * (VIEW === 'week' ? 7 : 3)));
+      var missing = daysIn(r[0], r[1]).filter(function (d) { return !CACHE[d]; });
+      if (missing.length) fetchRange(missing[0], missing[missing.length - 1]).catch(function () {});
+    });
   }
 
   function owed(rows) {
     return rows.filter(function (r) { return r.is_completed || !r.optional; }).length;
   }
 
-  function renderBoard() {
+  function renderBoard(days) {
+    SHOWN = days;
     var board = document.getElementById('board');
-    var days = Object.keys(RANGE.days).sort();
+    var today = todayNow();
     var done = 0, total = 0;
     days.forEach(function (d) {
-      if (d > RANGE.today) return;
-      var rows = RANGE.days[d];
+      if (d > today) return;
+      var rows = CACHE[d] || [];
       done += rows.filter(function (r) { return r.is_completed; }).length;
       total += owed(rows);
     });
@@ -1331,10 +1385,10 @@ body.painting .task, body.painting .field, body.painting .field input { transiti
   }
 
   function column(day) {
-    var rows = RANGE.days[day];
-    var future = day > RANGE.today, locked = future || !writable(day);
+    var rows = CACHE[day] || [];
+    var today = todayNow(), future = day > today, locked = future || !writable(day);
     var col = document.createElement('div');
-    col.className = 'col' + (day === RANGE.today ? ' is-today' : '') + (future ? ' future' : '');
+    col.className = 'col' + (day === today ? ' is-today' : '') + (future ? ' future' : '');
     var nDone = rows.filter(function (r) { return r.is_completed; }).length;
     var head = document.createElement('button');
     head.type = 'button';
@@ -1387,7 +1441,7 @@ body.painting .task, body.painting .field, body.painting .field input { transiti
           if (u && u.id) { r.id = u.id; delete r.virtual; }
           if (u && 'completed_at' in u) r.completed_at = u.completed_at;
           paintMini(b, r);
-          delete CACHE[r.day];
+          storeWrite(r.day, CACHE[r.day] || []);
           say(r.title + (next ? ' done' : ' un-done') + ' · ' + label(r.day, { month: 'short', day: 'numeric' }));
         })
         .catch(function (e) {
@@ -1430,7 +1484,7 @@ body.painting .task, body.painting .field, body.painting .field input { transiti
         if (u && 'completed_at' in u) r.completed_at = u.completed_at;
         if (isW && u && u.weight_lbs !== undefined) r.weight_lbs = u.weight_lbs;
         paintMini(el, r);
-        delete CACHE[r.day];
+        storeWrite(r.day, CACHE[r.day] || []);
         say((isW ? 'Weight ' + Number(v).toFixed(1) + ' lbs' : 'Wake-up ' + v) + ' saved · ' +
             label(r.day, { month: 'short', day: 'numeric' }) + (isW && u && u.warning ? ' — ' + u.warning : ''));
       }).catch(function (e) {

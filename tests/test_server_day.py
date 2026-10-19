@@ -764,3 +764,13 @@ def test_day_switch_is_one_paint():
     assert "fetchDay(d, false)" not in html
     # No fade on a switch: only a tap animates.
     assert "body.painting .task, body.painting .field" in html
+
+
+def test_range_views_paint_from_the_cache_and_prefetch_neighbours():
+    """Ranges used to wait on a fresh request for every step."""
+    html = server.page_today("2026-10-19")
+    assert "function showRange(start, end)" in html
+    assert "if (held(days)) { renderBoard(days);" in html     # paint first from what is held
+    assert "function prefetchRanges()" in html               # the ranges either side, ahead
+    assert "if (painted !== snapshot(days)) renderBoard(days);" in html  # redraw only on a difference
+    assert "body.ranged header { max-width: 560px; margin-left: auto; margin-right: auto; }" in html
