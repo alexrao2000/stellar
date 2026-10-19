@@ -724,3 +724,17 @@ def test_consistency_counts_unopened_days_as_owed(db, monkeypatch):
         {"day": "2026-10-11", "list_title": "Daily", "title": "Run", "is_completed": True}])
     out = sorted((r["day"], r["is_completed"]) for r in server.api_consistency())
     assert out == [("2026-10-11", True), ("2026-10-12", False), ("2026-10-13", False)]
+
+
+def test_today_page_keeps_today_current_after_midnight():
+    """An open tab must not keep the day it loaded on as 'today'.
+
+    It used to: overnight, the new day counted as one that hadn't happened, so
+    its tasks were locked until a reload.
+    """
+    html = server.page_today("2026-10-16")
+    assert '"tz":"' in html
+    assert "function todayNow()" in html
+    assert "function rollover()" in html
+    assert "> BOOT.today" not in html          # no comparisons against the load-time date
+    assert "BOOT.writable" not in html         # nor the load-time day's writability

@@ -1841,7 +1841,8 @@ def page_today(day: str | None = None, view: str = "day",
 
     from .timezones import resolve_timezone
 
-    tz = ZoneInfo(resolve_timezone(load_config(), allow_google=False))
+    tz_name = resolve_timezone(load_config(), allow_google=False)
+    tz = ZoneInfo(tz_name)
     today = datetime.now(tz).date().isoformat()
     if day:
         _check_day(day)
@@ -1856,6 +1857,7 @@ def page_today(day: str | None = None, view: str = "day",
         "today": today,
         "writable": date.fromisoformat(day) >= WRITE_FLOOR,
         "floor": WRITE_FLOOR.isoformat(),
+        "tz": tz_name,
         "view": view,
         "start": start,
         "end": end,
