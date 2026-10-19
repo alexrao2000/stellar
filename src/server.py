@@ -1198,17 +1198,19 @@ def api_day(day: str, response: Response, fresh: bool = False) -> list[dict]:
     or measurements appear to move backwards after a refresh.
     """
     _check_day(day)
-    defs = _definitions(fresh=fresh)
+    defs = _definitions(fresh=True)
     live = [d for d in defs if _live(d)]
     hidden = _binned_titles(defs)
     position: dict[str, int] = {}
     for i, d in enumerate(live):
         position.setdefault(d["title"], i)
-    if fresh:
-        response.headers["Cache-Control"] = "no-store"
-        rows = [_shape(r) for r in _day_rows(_sb(), day)]
-    else:
-        rows = [r for r in _task_history() if r["day"] == day]
+    # Always one live, day-scoped query. Answering from the full-history cache
+    # was cheap on a warm instance but wrong across instances -- each holds its
+    # own copy, up to fifteen minutes old, so a prefetched day could paint stale
+    # and then flip when the live read landed -- and on a cold one it meant
+    # downloading every row to return eight. `fresh` is kept for old clients.
+    response.headers["Cache-Control"] = "no-store"
+    rows = [_shape(r) for r in _day_rows(_sb(), day)]
     rows = [r for r in rows if r["title"] not in hidden]
     rows = rows + _scheduled(day, rows, live)
     rows.sort(key=lambda r: (position.get(r["title"], len(position)), r["title"]))
